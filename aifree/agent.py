@@ -1568,7 +1568,7 @@ class Agent:
         if should_answer_without_scan(task) and not _is_followup_with_context(
             task, self.history, self.recent_files
         ):
-            self._print(self.pal.dim("  agent · replying…"))
+            self._print(self.pal.dim("  agent · отвечаю…"))
             self.out.flush()
             ctx = ""
             if has_agent_ctx:

@@ -38,36 +38,36 @@ from .render import MarkdownRenderer, Palette, StreamRenderer, terminal_width
 from .store import Chat, ChatStore, Memory, human_time
 
 HELP = [
-    ("/help", "show this help"),
-    ("/new [title]", "new chat"),
-    ("/chats", "list chats"),
-    ("/open <index|id>", "open chat"),
-    ("/rename <title>", "rename current chat"),
-    ("/delete [index|id]", "delete chat"),
-    ("/model [name]", "select model"),
-    ("/models", "list models"),
-    ("/memory", "show remembered facts"),
-    ("/remember <fact>", "remember a fact"),
-    ("/forget <index>", "forget a fact"),
-    ("/system [text]", "assistant role/instructions"),
-    ("/retry", "retry last response"),
-    ("/copy", "copy last agent response"),
-    ("/export [file]", "export chat to markdown"),
-    ("/reset", "clear current chat history"),
-    ("/clear", "clear screen"),
-    ("/stats", "stats and data paths"),
-    ("/check", "check Gemini connectivity"),
-    ("/update", "check for updates and install"),
-    ("/smart on|off", "auto-route: chat or action"),
-    ("/agent [task]", "agent: menu or file task"),
-    ("/agentchat on|off", "send all messages to agent"),
-    ("/workspace [path]", "agent workspace directory"),
-    ("/agentmode [mode]", "agent mode: ask, auto, plan"),
-    ("/run <command>", "run command in workspace"),
-    ("/undo", "undo last agent changes"),
-    ("/backups", "agent restore points"),
-    ("/stream on|off", "toggle streaming"),
-    ("/quit", "exit"),
+    ("/help", "показать эту справку"),
+    ("/new [title]", "новый чат"),
+    ("/chats", "список чатов"),
+    ("/open <index|id>", "открыть чат"),
+    ("/rename <title>", "переименовать текущий чат"),
+    ("/delete [index|id]", "удалить чат"),
+    ("/model [name]", "выбрать модель"),
+    ("/models", "список моделей"),
+    ("/memory", "показать сохранённые факты"),
+    ("/remember <fact>", "запомнить факт"),
+    ("/forget <index>", "забыть факт"),
+    ("/system [text]", "роль/инструкции ассистента"),
+    ("/retry", "повторить последний ответ"),
+    ("/copy", "скопировать последний ответ"),
+    ("/export [file]", "экспорт чата в markdown"),
+    ("/reset", "очистить историю чата"),
+    ("/clear", "очистить экран"),
+    ("/stats", "статистика и пути"),
+    ("/check", "проверить связь с Gemini"),
+    ("/update", "проверить обновления и установить"),
+    ("/smart on|off", "авто-выбор: чат или действие"),
+    ("/agent [task]", "агент: меню или задача по файлам"),
+    ("/agentchat on|off", "отправлять все сообщения агенту"),
+    ("/workspace [path]", "папка проекта агента"),
+    ("/agentmode [mode]", "режим агента: ask, auto, plan"),
+    ("/run <command>", "выполнить команду в папке"),
+    ("/undo", "откатить изменения агента"),
+    ("/backups", "точки восстановления агента"),
+    ("/stream on|off", "вкл/выкл стриминг"),
+    ("/quit", "выход"),
 ]
 
 COMMANDS = [name.split()[0] for name, _ in HELP] + [
@@ -86,9 +86,9 @@ def _rl_wrap_prompt(text: str) -> str:
 
 
 AGENT_MODE_NAMES = {
-    "ask": "ask",
-    "auto": "auto",
-    "dry-run": "plan (no write)",
+    "ask": "спрашивать",
+    "auto": "авто",
+    "dry-run": "план (без записи)",
 }
 
 
@@ -165,19 +165,19 @@ class App:
                 elif self.agent_chat:
                     self._run_agent_task(line)
                 elif self.smart_route and is_action_request(line):
-                    print(self.pal.dim("sys  · route   action detected → agent (auto)"))
+                    print(self.pal.dim("sys  · маршрут  обнаружено действие → агент (авто)"))
                     self._run_agent_task(line)
                 else:
                     self.send(line)
         finally:
             self._save()
             self._write_history()
-            print(self.pal.dim("sys  bye"))
+            print(self.pal.dim("sys  пока"))
         return 0
 
     def one_shot(self, text: str, as_json: bool = False) -> int:
         if not text.strip():
-            print("empty prompt", file=sys.stderr)
+            print("пустой запрос", file=sys.stderr)
             return 2
         prompt = build_prompt(
             self.chat, self.memory.items, text, int(self.cfg["max_context_chars"])
@@ -440,7 +440,7 @@ class App:
                     state["first"] = False
                 renderer.feed(chunk)
 
-            self.out.write(self.pal.dim("agent · thinking…"))
+            self.out.write(self.pal.dim("agent · думаю…"))
             self.out.flush()
             try:
                 reply = client.ask(prompt, on_delta=on_delta)
@@ -501,17 +501,17 @@ class App:
         if not candidates:
             return
         messages, new_upto = candidates
-        print(self.pal.dim("sys   compressing older dialog into summary…"))
+        print(self.pal.dim("sys   сжимаю старый диалог в краткий пересказ…"))
         try:
             client = Gemini("lite", timeout=float(self.cfg["timeout"]))
             reply = client.ask(make_summary_prompt(messages, self.chat.summary))
         except (GeminiError, KeyboardInterrupt):
-            print(self.pal.dim("sys   summary failed, will retry later"))
+            print(self.pal.dim("sys   не удалось обновить пересказ, попробую позже"))
             return
         self.chat.summary = reply.text.strip()
         self.chat.summary_upto = new_upto
         self._save()
-        print(self.pal.dim(f"sys   summary updated: {len(messages)} messages"))
+        print(self.pal.dim(f"sys   пересказ обновлён: {len(messages)} сообщ."))
 
     # ── команды ────────────────────────────────────────────────────────
     def command(self, line: str) -> str | None:
@@ -588,18 +588,18 @@ class App:
         elif cmd in ("about", "version"):
             self._about()
         else:
-            print(self.pal.red(f"  sys  unknown command: /{cmd}"))
-            print(self.pal.dim("  sys  /help — list commands"))
+            print(self.pal.red(f"  sys  неизвестная команда: /{cmd}"))
+            print(self.pal.dim("  sys  /help — список команд"))
         return None
 
     def _help(self) -> None:
         print()
-        print(self.pal.bold("Commands"))
+        print(self.pal.bold("Команды"))
         for name, desc in HELP:
             print(f"  {self.pal.cyan(name.ljust(20))} {desc}")
         print()
-        print(self.pal.dim("  Multiline input: end a line with \\"))
-        print(self.pal.dim("  Ctrl-C during response stops generation."))
+        print(self.pal.dim("  Многострочный ввод: закончите строку символом \\"))
+        print(self.pal.dim("  Ctrl-C во время ответа останавливает генерацию."))
         print()
 
     def _new(self, title: str) -> None:
@@ -609,36 +609,36 @@ class App:
 
             self.chat = Chat(
                 id="ephemeral-" + uuid.uuid4().hex[:8],
-                title=title or "New chat",
+                title=title or "Новый чат",
                 model=self.chat.model,
                 system=self.chat.system,
             )
         else:
             self.chat = self.store.new(
-                title=title or "New chat",
+                title=title or "Новый чат",
                 model=self.chat.model,
                 system=self.chat.system,
             )
         if not self.ephemeral:
             self.cfg["last_chat"] = self.chat.id
             save_config(self.cfg)
-        print(self.pal.green(f"sys   ✓ new chat: {self.chat.title}"))
+        print(self.pal.green(f"sys   ✓ новый чат: {self.chat.title}"))
         print(self.pal.dim(f"      id: {self.chat.id}"))
 
     def _chats(self) -> None:
         items = self.store.list()
         if not items:
-            print(self.pal.dim("sys   no chats yet"))
+            print(self.pal.dim("sys   чатов пока нет"))
             return
         print()
-        print(self.pal.bold("Chats"))
+        print(self.pal.bold("Чаты"))
         for index, item in enumerate(items, 1):
             mark = self.pal.green("●") if item["id"] == self.chat.id else " "
             summary = self.pal.magenta("≡") if item["summary"] else " "
             title = item["title"][:44]
             print(
                 f"  {mark} {str(index).rjust(2)}. {title.ljust(46)} "
-                f"{str(item['count']).rjust(3)} msgs  {human_time(item['updated'])} {summary}"
+                f"{str(item['count']).rjust(3)} сообщ.  {human_time(item['updated'])} {summary}"
             )
         print()
         print(self.pal.dim(f"  открыть: /open <номер>   папка: {CHATS_DIR}"))
@@ -1042,37 +1042,37 @@ class App:
     def _run_agent_task(self, task: str, mode: str | None = None) -> None:
         mode = normalize_agent_mode(mode or self.agent_mode)
         label = AGENT_MODE_NAMES.get(mode, mode)
-        print(self.pal.dim(f"sys  · agent   mode: {label} · ws: {self.workspace}"))
+        print(self.pal.dim(f"sys  · агент   режим: {label} · папка: {self.workspace}"))
         history = self.chat.messages[-5:]
         recent_files = list(self.recent_agent_files)
         try:
             agent = self._make_agent(mode, history=history, recent_files=recent_files)
             result = agent.run(task)
         except KeyboardInterrupt:
-            print(self.pal.yellow("sys  · stopped"))
+            print(self.pal.yellow("sys  · остановлено"))
             return
         except (AgentError, GeminiError) as exc:
-            print(self.pal.red(f"sys  · error: {exc}"))
+            print(self.pal.red(f"sys  · ошибка: {exc}"))
             return
 
         self._record_agent_result(task, result)
 
         if result.error:
-            print(self.pal.red(f"sys  · error: {result.error}"))
+            print(self.pal.red(f"sys  · ошибка: {result.error}"))
         elif result.dry_run:
-            print(self.pal.yellow("sys  · dry-run: files not changed"))
+            print(self.pal.yellow("sys  · dry-run: файлы не изменены"))
             if result.changed:
-                print(self.pal.dim(f"      plan: {', '.join(result.changed)}"))
+                print(self.pal.dim(f"      план: {', '.join(result.changed)}"))
         elif result.applied or result.ran:
             if result.applied:
-                print(self.pal.green(f"sys  · changed files: {len(result.changed)}"))
+                print(self.pal.green(f"sys  · изменено файлов: {len(result.changed)}"))
             if result.ran:
                 ok = sum(1 for r in result.ran if r.get("code") == 0)
-                print(self.pal.dim(f"      checks: {len(result.ran)}, ok: {ok}"))
+                print(self.pal.dim(f"      проверки: {len(result.ran)}, успешно: {ok}"))
             if result.backup:
-                print(self.pal.dim(f"      undo: /undo · backup: {result.backup}"))
+                print(self.pal.dim(f"      откат: /undo · бэкап: {result.backup}"))
         else:
-            print(self.pal.dim("sys  · no changes"))
+            print(self.pal.dim("sys  · изменений нет"))
 
     def _record_agent_result(self, task: str, result) -> None:
         # track recent files for follow-ups (session/chat context)
@@ -1332,12 +1332,12 @@ class App:
     def _copy(self, arg: str = "") -> None:
         text = (self.last_answer or "").strip()
         if not text:
-            print(self.pal.dim("sys   nothing to copy"))
+            print(self.pal.dim("sys   нечего копировать"))
             return
         if self._copy_to_clipboard(text):
-            print(self.pal.green(f"sys   ✓ copied to clipboard ({len(text)} chars)"))
+            print(self.pal.green(f"sys   ✓ скопировано в буфер ({len(text)} симв.)"))
         else:
-            print(self.pal.red("sys   clipboard unavailable (install wl-copy/xclip/pbcopy or use Windows)"))
+            print(self.pal.red("sys   буфер обмена недоступен (установите wl-copy/xclip/pbcopy или используйте Windows)"))
 
     def _copy_to_clipboard(self, text: str) -> bool:
         try:
@@ -1359,39 +1359,39 @@ class App:
     def _update(self) -> None:
         from .update import check_update, install_update, restart_program
 
-        print(self.pal.dim("sys   checking for updates…"))
+        print(self.pal.dim("sys   проверяю обновления…"))
         info = check_update(timeout=12.0)
         if info.error:
-            print(self.pal.red(f"sys   ✗ could not check: {info.error}"))
+            print(self.pal.red(f"sys   ✗ не удалось проверить: {info.error}"))
             return
         if not info.available:
             if info.latest and info.ahead:
-                print(self.pal.green(f"sys   ✓ local version is ahead ({info.current} > GitHub {info.latest})"))
+                print(self.pal.green(f"sys   ✓ локальная версия новее ({info.current} > GitHub {info.latest})"))
             else:
-                print(self.pal.green(f"sys   ✓ up to date ({info.current})"))
+                print(self.pal.green(f"sys   ✓ актуальная версия ({info.current})"))
                 if info.latest:
-                    print(self.pal.dim(f"      latest: {info.latest}"))
+                    print(self.pal.dim(f"      последняя на GitHub: {info.latest}"))
             return
 
-        print(self.pal.yellow(f"sys   update available: {info.latest} (current {info.current})"))
+        print(self.pal.yellow(f"sys   доступно обновление: {info.latest} (текущая {info.current})"))
         print(self.pal.dim(f"      {info.url}"))
-        if not self._confirm("sys   Install now?"):
-            print(self.pal.dim("sys   skipped"))
+        if not self._confirm("sys   Установить сейчас?"):
+            print(self.pal.dim("sys   пропущено"))
             return
-        print(self.pal.dim("sys   installing update…"))
+        print(self.pal.dim("sys   устанавливаю обновление…"))
         ok, msg = install_update(timeout=180.0)
         if ok:
             print(self.pal.green(f"sys   ✓ {msg}"))
-            print(self.pal.dim("sys   restarting ExelCode..."))
+            print(self.pal.dim("sys   перезапускаю ExelCode..."))
             restart_program()
         else:
             print(self.pal.red(f"sys   ✗ {msg}"))
 
     def _about(self) -> None:
         print()
-        print(f"  {self.pal.bold('ExelCode')} {__version__} — Gemini, no key")
-        print(self.pal.dim("  web protocol gemini.google.com, Python standard library only"))
-        print(self.pal.dim(f"  data: {DATA_DIR}"))
+        print(f"  {self.pal.bold('ExelCode')} {__version__} — Gemini, без ключа")
+        print(self.pal.dim("  веб-протокол gemini.google.com, только стандартная библиотека Python"))
+        print(self.pal.dim(f"  данные: {DATA_DIR}"))
         print()
 
     # ── служебное ──────────────────────────────────────────────────────
@@ -1411,7 +1411,7 @@ class App:
 
     def banner(self) -> None:
         title = f" ExelCode {__version__} "
-        chat = (self.chat.title or "New chat")[:28]
+        chat = (self.chat.title or "Новый чат")[:28]
         model = resolve_model(self.chat.model)["name"]
         width = max(20, min(self.width, 80))
         inner = max(10, width - 2)
@@ -1426,21 +1426,21 @@ class App:
         def row(text: str) -> str:
             return "│" + fit(text).ljust(inner) + "│"
 
-        stream = "on" if self.stream else "off"
-        smart = "on" if self.smart_route else "off"
+        stream = "вкл" if self.stream else "выкл"
+        smart = "вкл" if self.smart_route else "выкл"
         mode = AGENT_MODE_NAMES.get(self.agent_mode, self.agent_mode)
         ws = str(self.workspace)
         if len(ws) > 28:
             ws = "…" + ws[-27:]
-        hint = "/help menu"
+        hint = "меню: /help"
         if len(hint) >= inner:
             hint_row = fit(hint)
         else:
             hint_row = " " * (inner - len(hint)) + hint
         print()
         print(self.pal.cyan("╭" + fit("─" + title).ljust(inner, "─") + "╮"))
-        print(self.pal.cyan(row(f" chat: {chat} · model: auto→{model} · stream {stream}")))
-        print(self.pal.cyan(row(f" smart {smart} · agent {mode} · ws: {ws or '-'}")))
+        print(self.pal.cyan(row(f" чат: {chat} · модель: auto→{model} · стрим: {stream}")))
+        print(self.pal.cyan(row(f" умный: {smart} · агент: {mode} · папка: {ws or '-'}")))
         print(self.pal.cyan(row(hint_row)))
         print(self.pal.cyan("╰" + "─" * inner + "╯"))
         print()

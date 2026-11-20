@@ -4,9 +4,9 @@
 Использует анонимный веб-протокол `gemini.google.com`.
 
 ```
-╭─ ExelCode 1.5.3 ──────────────────────────────────────────────╮
-│ chat: New chat · model: auto→3.5 Flash-Lite · stream on      │
-│ smart off · agent ask · ws: —                      /help menu │
+╭─ ExelCode 1.5.4 ──────────────────────────────────────────────╮
+│ чат: Новый чат · модель: auto→3.5 Flash-Lite · стрим: вкл     │
+│ умный: выкл · агент: спрашивать · папка: —         меню: /help │
 ╰───────────────────────────────────────────────────────────────╯
 
 user › explain HTTP/2 in simple terms, briefly

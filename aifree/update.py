@@ -234,18 +234,18 @@ def startup_update_check(
                 ans = input(q).strip().lower()
             except (EOFError, KeyboardInterrupt):
                 return False
-            return ans in ("y", "yes")
+            return ans in ("y", "yes", "д", "да")
 
-    say(f"Update available: {info.latest} (current {info.current})")
-    if not ask("Install update and restart now? [y/N]: "):
+    say(f"Доступно обновление: {info.latest} (текущая {info.current})")
+    if not ask("Установить обновление и перезапустить сейчас? [y/N]: "):
         return False
 
     ok, msg = install_update(timeout=180.0)
     if not ok:
-        say(f"Update failed: {msg}")
+        say(f"Ошибка обновления: {msg}")
         return False
-    say(f"Updated: {msg}")
-    say("Restarting ExelCode...")
+    say(f"Обновлено: {msg}")
+    say("Перезапускаю ExelCode...")
     restart_program()
     return True  # not reached on successful exec, but for clarity
 

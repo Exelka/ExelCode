@@ -22,30 +22,30 @@ from .ui import App
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="exelcode",
-        description="ExelCode — console AI chat and coding agent on Gemini (no key).",
-        epilog="Without arguments, starts interactive chat.",
+        description="ExelCode — консольный ИИ-чат и coding-агент на Gemini (без ключа).",
+        epilog="Без аргументов запускает интерактивный чат.",
     )
-    parser.add_argument("prompt", nargs="*", help="one-shot prompt (no REPL)")
-    parser.add_argument("-p", "--prompt", dest="prompt_opt", help="one-shot prompt")
-    parser.add_argument("-m", "--model", help="model: auto, flash, lite")
-    parser.add_argument("--new", action="store_true", help="start a new chat")
-    parser.add_argument("--chat", help="open chat by index or id")
-    parser.add_argument("--list", action="store_true", help="list chats")
-    parser.add_argument("--models", action="store_true", help="list models")
-    parser.add_argument("--no-stream", action="store_true", help="disable streaming")
-    parser.add_argument("--no-color", action="store_true", help="disable colors")
-    parser.add_argument("--ephemeral", action="store_true", help="do not save chat")
-    parser.add_argument("--json", action="store_true", help="JSON output (with -p)")
-    parser.add_argument("--check", action="store_true", help="check Gemini connectivity")
-    parser.add_argument("--agent", action="store_true", help="agent mode: read and edit files")
-    parser.add_argument("--workspace", help="project directory for the agent")
-    parser.add_argument("--agent-mode", choices=["ask", "auto", "plan"], help="agent mode")
-    parser.add_argument("-y", "--yes", action="store_true", help="apply changes/checks without prompt")
-    parser.add_argument("--dry-run", action="store_true", help="show plan and diff, do not apply")
-    parser.add_argument("--undo", action="store_true", help="undo last agent changes")
-    parser.add_argument("--backups", action="store_true", help="list agent restore points")
-    parser.add_argument("--update", action="store_true", help="check for updates and install")
-    parser.add_argument("--version", action="store_true", help="show version")
+    parser.add_argument("prompt", nargs="*", help="одноразовый запрос (без REPL)")
+    parser.add_argument("-p", "--prompt", dest="prompt_opt", help="одноразовый запрос")
+    parser.add_argument("-m", "--model", help="модель: auto, flash, lite")
+    parser.add_argument("--new", action="store_true", help="начать новый чат")
+    parser.add_argument("--chat", help="открыть чат по номеру или id")
+    parser.add_argument("--list", action="store_true", help="список чатов")
+    parser.add_argument("--models", action="store_true", help="список моделей")
+    parser.add_argument("--no-stream", action="store_true", help="отключить стриминг")
+    parser.add_argument("--no-color", action="store_true", help="отключить цвета")
+    parser.add_argument("--ephemeral", action="store_true", help="не сохранять чат")
+    parser.add_argument("--json", action="store_true", help="вывод JSON (с -p)")
+    parser.add_argument("--check", action="store_true", help="проверить связь с Gemini")
+    parser.add_argument("--agent", action="store_true", help="режим агента: чтение и правка файлов")
+    parser.add_argument("--workspace", help="папка проекта для агента")
+    parser.add_argument("--agent-mode", choices=["ask", "auto", "plan"], help="режим агента")
+    parser.add_argument("-y", "--yes", action="store_true", help="применять изменения/проверки без запроса")
+    parser.add_argument("--dry-run", action="store_true", help="показать план и diff, не применять")
+    parser.add_argument("--undo", action="store_true", help="откатить последние изменения агента")
+    parser.add_argument("--backups", action="store_true", help="список точек восстановления агента")
+    parser.add_argument("--update", action="store_true", help="проверить обновления и установить")
+    parser.add_argument("--version", action="store_true", help="показать версию")
     return parser
 
 
@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.workspace:
         workspace = Path(os.path.expanduser(args.workspace)).resolve()
         if not workspace.is_dir():
-            print(f"error: directory not found: {workspace}", file=sys.stderr)
+            print(f"ошибка: папка не найдена: {workspace}", file=sys.stderr)
             return 2
         cfg["agent_workspace"] = str(workspace)
         save_config(cfg)
@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.update:
         return _cmd_update(pal, auto_yes=bool(args.yes))
     if (args.yes or args.dry_run) and not args.agent and not args.update:
-        print("error: --yes and --dry-run require --agent (or --update)", file=sys.stderr)
+        print("ошибка: --yes и --dry-run требуют --agent (или --update)", file=sys.stderr)
         return 2
 
     if args.list:
@@ -96,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
             cfg["model"] = resolve_model(args.model)["id"]
             save_config(cfg)
     except GeminiError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"ошибка: {exc}", file=sys.stderr)
         return 2
 
     text = args.prompt_opt or " ".join(args.prompt).strip()
@@ -116,12 +116,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.agent:
         if text:
             return _run_agent(args, cfg, text, pal)
-        print(pal.dim("  agent: /agent in chat · /agent <task> · /workspace · /undo"))
+        print(pal.dim("  агент: /agent в чате · /agent <задача> · /workspace · /undo"))
 
     try:
         chat = _pick_chat(args, cfg, store, pal)
     except GeminiError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"ошибка: {exc}", file=sys.stderr)
         return 2
 
     if chat.model not in {m["id"] for m in MODELS}:
@@ -156,11 +156,11 @@ def _pick_chat(args, cfg: dict, store: ChatStore, pal: Palette) -> Chat:
         items = store.list()
         chat_id = store.resolve(args.chat, items)
         if not chat_id or not store.exists(chat_id):
-            raise GeminiError(f"chat not found: {args.chat}")
+            raise GeminiError(f"чат не найден: {args.chat}")
         try:
             chat = store.load(chat_id)
         except (OSError, ValueError, KeyError) as exc:
-            raise GeminiError(f"could not read chat {chat_id}: {exc}") from exc
+            raise GeminiError(f"не удалось прочитать чат {chat_id}: {exc}") from exc
     elif args.new or args.ephemeral:
         chat = _new_chat(store, cfg, args.ephemeral)
     elif cfg.get("last_chat") and store.exists(str(cfg["last_chat"])):
@@ -185,7 +185,7 @@ def _new_chat(store: ChatStore, cfg: dict, ephemeral: bool) -> Chat:
     if ephemeral:
         return Chat(
             id="ephemeral-" + uuid.uuid4().hex[:8],
-            title="New chat",
+            title="Новый чат",
             model=model,
             system=system,
         )
@@ -195,37 +195,37 @@ def _new_chat(store: ChatStore, cfg: dict, ephemeral: bool) -> Chat:
 def _print_chats(store: ChatStore, cfg: dict, pal: Palette) -> int:
     items = store.list()
     if not items:
-        print("no chats yet")
+        print("чатов пока нет")
         return 0
     current = cfg.get("last_chat")
-    print("Chats:")
+    print("Чаты:")
     for index, item in enumerate(items, 1):
         mark = "*" if item["id"] == current else " "
         summary = " [summary]" if item["summary"] else ""
         print(
             f" {mark} {index:2d}. {item['title']}  "
-            f"({item['count']} msgs, {item['model']}, {human_time(item['updated'])}){summary}"
+            f"({item['count']} сообщ., {item['model']}, {human_time(item['updated'])}){summary}"
         )
         print(pal.dim(f"      {item['id']}"))
     return 0
 
 
 def _print_models(pal: Palette) -> int:
-    print("Models:")
+    print("Модели:")
     for model in MODELS:
         print(f"  {model['id']:<6} {model['name']} — {model['desc']}")
-    print(pal.dim("\nAnonymous mode: Google usually answers as 3.5 Flash-Lite."))
+    print(pal.dim("\nАнонимный режим: Google обычно отвечает как 3.5 Flash-Lite."))
     return 0
 
 
 def _check(pal: Palette, timeout: float) -> int:
-    print("Checking Gemini connectivity…")
+    print("Проверяю связь с Gemini…")
     try:
         reply = Gemini("lite", timeout=timeout).ask("Reply with exactly one word: ok")
     except GeminiError as exc:
         print(pal.red(f"  ✗ {exc}"))
         return 1
-    print(pal.green(f"  ✓ reply in {reply.elapsed:.1f} s, model {reply.model}"))
+    print(pal.green(f"  ✓ ответ за {reply.elapsed:.1f} с, модель {reply.model}"))
     print(pal.dim(f"  {reply.text[:120]}"))
     return 0
 
@@ -262,13 +262,13 @@ def _run_agent(args, cfg: dict, text: str, pal: Palette) -> int:
         )
         result = agent.run(text)
     except KeyboardInterrupt:
-        print("stopped", file=sys.stderr)
+        print("остановлено", file=sys.stderr)
         return 130
     except (AgentError, GeminiError) as exc:
         if args.json:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False))
         else:
-            print(pal.red(f"error: {exc}"), file=sys.stderr)
+            print(pal.red(f"ошибка: {exc}"), file=sys.stderr)
         return 1
 
     if args.json:
@@ -288,21 +288,21 @@ def _run_agent(args, cfg: dict, text: str, pal: Palette) -> int:
             )
         )
     elif result.error:
-        print(pal.red(f"error: {result.error}"))
+        print(pal.red(f"ошибка: {result.error}"))
     elif result.dry_run:
-        print(pal.yellow("dry-run: files not changed"))
+        print(pal.yellow("dry-run: файлы не изменены"))
         if result.changed:
-            print(pal.dim("plan: " + ", ".join(result.changed)))
+            print(pal.dim("план: " + ", ".join(result.changed)))
     elif result.applied or result.ran:
         if result.applied:
-            print(pal.green(f"done: changed {len(result.changed)} file(s)"))
+            print(pal.green(f"готово: изменено файлов {len(result.changed)}"))
         if result.ran:
             ok = sum(1 for r in result.ran if r.get("code") == 0)
-            print(pal.dim(f"checks: {len(result.ran)}, ok: {ok}"))
+            print(pal.dim(f"проверки: {len(result.ran)}, успешно: {ok}"))
         if result.backup:
-            print(pal.dim(f"undo: --undo · backup: {result.backup}"))
+            print(pal.dim(f"откат: --undo · бэкап: {result.backup}"))
     else:
-        print(pal.dim("no changes"))
+        print(pal.dim("изменений нет"))
     return 0 if not result.error else 1
 
 
@@ -312,13 +312,13 @@ def _undo(cfg: dict, pal: Palette) -> int:
     try:
         data = undo_last(default_workspace(cfg), BACKUPS_DIR)
     except AgentError as exc:
-        print(pal.red(f"error: {exc}"))
+        print(pal.red(f"ошибка: {exc}"))
         return 1
     if not data:
-        print("nothing to undo")
+        print("нечего откатывать")
         return 0
     restored = data.get("restored", [])
-    print(pal.green(f"restored files: {len(restored)}"))
+    print(pal.green(f"восстановлено файлов: {len(restored)}"))
     for rel in restored:
         print(pal.dim(f"  ↩ {rel}"))
     return 0
@@ -331,12 +331,12 @@ def _print_backups(cfg: dict, pal: Palette) -> int:
         workspace = default_workspace(cfg)
         items = list_backups(workspace, BACKUPS_DIR)
     except AgentError as exc:
-        print(pal.red(f"error: {exc}"))
+        print(pal.red(f"ошибка: {exc}"))
         return 1
     if not items:
-        print("no restore points")
+        print("нет точек восстановления")
         return 0
-    print(f"Restore points · {workspace}")
+    print(f"Точки восстановления · {workspace}")
     for data in items[:10]:
         status = data.get("status", "?")
         stamp = time.strftime(
@@ -346,7 +346,7 @@ def _print_backups(cfg: dict, pal: Palette) -> int:
         mark = {"applied": "✓", "undone": "↩", "failed": "⚠", "applying": "…"}.get(
             status, "?"
         )
-        print(f" {mark} {stamp} · {files} file(s) · {status}")
+        print(f" {mark} {stamp} · {files} файл(ов) · {status}")
         print(pal.dim(f"      {data.get('_path')}"))
     return 0
 
@@ -354,43 +354,43 @@ def _print_backups(cfg: dict, pal: Palette) -> int:
 def _cmd_update(pal: Palette, auto_yes: bool = False) -> int:
     from .update import check_update, install_update, restart_program
 
-    print("Checking for updates…")
+    print("Проверяю обновления…")
     info = check_update(timeout=12.0)
     if info.error:
-        print(pal.red(f"  ✗ could not check: {info.error}"))
+        print(pal.red(f"  ✗ не удалось проверить: {info.error}"))
         return 1
     if not info.available:
         if info.latest and info.ahead:
-            print(pal.green(f"  ✓ local version is ahead ({info.current} > GitHub {info.latest})"))
+            print(pal.green(f"  ✓ локальная версия новее ({info.current} > GitHub {info.latest})"))
         else:
-            print(pal.green(f"  ✓ up to date ({info.current})"))
+            print(pal.green(f"  ✓ актуальная версия ({info.current})"))
             if info.latest:
-                print(pal.dim(f"    latest on GitHub: {info.latest}"))
+                print(pal.dim(f"    последняя на GitHub: {info.latest}"))
         return 0
 
-    print(pal.yellow(f"  update available: {info.latest} (current {info.current})"))
+    print(pal.yellow(f"  доступно обновление: {info.latest} (текущая {info.current})"))
     print(pal.dim(f"  {info.url}"))
 
     do_install = auto_yes
     if not do_install and sys.stdin.isatty():
         try:
-            answer = input("  Install now? [y/N]: ").strip().lower()
+            answer = input("  Установить сейчас? [y/N]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             answer = ""
-        do_install = answer in ("y", "yes")
+        do_install = answer in ("y", "yes", "д", "да")
     elif not do_install:
-        print(pal.dim("  run interactively or with --update -y to install"))
+        print(pal.dim("  запустите интерактивно или с --update -y для установки"))
         return 0
 
     if not do_install:
-        print(pal.dim("  skipped"))
+        print(pal.dim("  пропущено"))
         return 0
 
-    print("Installing update…")
+    print("Устанавливаю обновление…")
     ok, msg = install_update(timeout=180.0)
     if ok:
         print(pal.green(f"  ✓ {msg}"))
-        print(pal.dim("  restarting ExelCode..."))
+        print(pal.dim("  перезапускаю ExelCode..."))
         restart_program()
         return 0
     print(pal.red(f"  ✗ {msg}"))
