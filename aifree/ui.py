@@ -224,6 +224,8 @@ class App:
         return input(prompt)
 
     def _read_input(self) -> str | None:
+        if self.agent_chat:
+            print()
         label = "agent › " if self.agent_chat else "user  › "
         line = self._input(self.pal.cyan(label))
         if not line.endswith("\\"):
