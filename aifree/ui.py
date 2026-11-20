@@ -1,11 +1,12 @@
-"""Интерактивный REPL и команды приложения."""
+"""Interactive REPL and application commands."""
 
 from __future__ import annotations
 
-import atexit
 import os
 import re
 import shlex
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -37,34 +38,36 @@ from .render import MarkdownRenderer, Palette, StreamRenderer, terminal_width
 from .store import Chat, ChatStore, Memory, human_time
 
 HELP = [
-    ("/help", "эта справка"),
-    ("/new [название]", "новый чат"),
-    ("/chats", "список чатов"),
-    ("/open <номер|id>", "открыть чат"),
-    ("/rename <название>", "переименовать текущий чат"),
-    ("/delete [номер|id]", "удалить чат"),
-    ("/model [имя]", "выбрать модель"),
-    ("/models", "список моделей"),
-    ("/memory", "что я помню о вас"),
-    ("/remember <факт>", "запомнить факт"),
-    ("/forget <номер>", "забыть факт"),
-    ("/system [текст]", "роль/характер ассистента"),
-    ("/retry", "повторить последний ответ"),
-    ("/export [файл]", "экспорт чата в markdown"),
-    ("/reset", "очистить историю текущего чата"),
-    ("/clear", "очистить экран"),
-    ("/stats", "статистика и пути данных"),
-    ("/check", "проверить связь с Gemini"),
-    ("/smart on|off", "умный режим: сам решает чат или действие"),
-    ("/agent [задача]", "агент: меню/задача по файлам"),
-    ("/agentchat on|off", "все обычные сообщения → агенту"),
-    ("/workspace [путь]", "папка проекта для агента"),
-    ("/agentmode [режим]", "режим агента: ask, auto, plan"),
-    ("/run <команда>", "запустить команду в папке агента"),
-    ("/undo", "откатить последние изменения агента"),
-    ("/backups", "точки отката агента"),
-    ("/stream on|off", "стриминг ответа"),
-    ("/quit", "выход"),
+    ("/help", "show this help"),
+    ("/new [title]", "new chat"),
+    ("/chats", "list chats"),
+    ("/open <index|id>", "open chat"),
+    ("/rename <title>", "rename current chat"),
+    ("/delete [index|id]", "delete chat"),
+    ("/model [name]", "select model"),
+    ("/models", "list models"),
+    ("/memory", "show remembered facts"),
+    ("/remember <fact>", "remember a fact"),
+    ("/forget <index>", "forget a fact"),
+    ("/system [text]", "assistant role/instructions"),
+    ("/retry", "retry last response"),
+    ("/copy", "copy last agent response"),
+    ("/export [file]", "export chat to markdown"),
+    ("/reset", "clear current chat history"),
+    ("/clear", "clear screen"),
+    ("/stats", "stats and data paths"),
+    ("/check", "check Gemini connectivity"),
+    ("/update", "check for updates and install"),
+    ("/smart on|off", "auto-route: chat or action"),
+    ("/agent [task]", "agent: menu or file task"),
+    ("/agentchat on|off", "send all messages to agent"),
+    ("/workspace [path]", "agent workspace directory"),
+    ("/agentmode [mode]", "agent mode: ask, auto, plan"),
+    ("/run <command>", "run command in workspace"),
+    ("/undo", "undo last agent changes"),
+    ("/backups", "agent restore points"),
+    ("/stream on|off", "toggle streaming"),
+    ("/quit", "exit"),
 ]
 
 COMMANDS = [name.split()[0] for name, _ in HELP] + [
@@ -74,9 +77,9 @@ COMMANDS = [name.split()[0] for name, _ in HELP] + [
 
 
 AGENT_MODE_NAMES = {
-    "ask": "спрашивать",
-    "auto": "авто",
-    "dry-run": "план (без записи)",
+    "ask": "ask",
+    "auto": "auto",
+    "dry-run": "plan (no write)",
 }
 
 
@@ -120,6 +123,7 @@ class App:
         self.out = sys.stdout
         self.tty = sys.stdout.isatty()
         self.last_prompt = ""
+        self.last_answer = ""
         self.client: Gemini | None = None
         self._readline = self._setup_readline()
 
@@ -144,19 +148,19 @@ class App:
                 elif self.agent_chat:
                     self._run_agent_task(line)
                 elif self.smart_route and is_action_request(line):
-                    print(self.pal.dim("  ⚡ задача для агента — выполняю автоматически"))
+                    print(self.pal.dim("sys  · route   action detected → agent (auto)"))
                     self._run_agent_task(line)
                 else:
                     self.send(line)
         finally:
             self._save()
             self._write_history()
-            print(self.pal.dim("  пока-пока 👋"))
+            print(self.pal.dim("sys  bye"))
         return 0
 
     def one_shot(self, text: str, as_json: bool = False) -> int:
         if not text.strip():
-            print("пустой запрос", file=sys.stderr)
+            print("empty prompt", file=sys.stderr)
             return 2
         prompt = build_prompt(
             self.chat, self.memory.items, text, int(self.cfg["max_context_chars"])
@@ -171,10 +175,11 @@ class App:
         try:
             reply = client.ask(prompt)
         except GeminiError as exc:
-            print(f"ошибка: {exc}", file=sys.stderr)
+            print(f"error: {exc}", file=sys.stderr)
             return 1
 
         self.chat.add("assistant", reply.text, model=reply.model)
+        self.last_answer = reply.text
         if not self.ephemeral:
             self.store.save(self.chat)
         if as_json:
@@ -197,7 +202,7 @@ class App:
 
     # ── ввод ───────────────────────────────────────────────────────────
     def _read_input(self) -> str | None:
-        label = "агент › " if self.agent_chat else "вы › "
+        label = "agent › " if self.agent_chat else "user  › "
         prompt = self.pal.cyan(label)
         line = input(prompt)
         if not line.endswith("\\"):
@@ -386,7 +391,7 @@ class App:
         except OSError:
             pass
 
-    # ── отправка запроса ───────────────────────────────────────────────
+    # ── send request ───────────────────────────────────────────────────
     def send(self, text: str) -> None:
         prompt = build_prompt(
             self.chat, self.memory.items, text, int(self.cfg["max_context_chars"])
@@ -399,21 +404,21 @@ class App:
 
     def _generate(self, prompt: str) -> None:
         selected = resolve_model(self.chat.model)
-        print(self.pal.dim(f"  🤖 {selected['name']}"))
         client = Gemini(selected, timeout=float(self.cfg["timeout"]))
         self.client = client
 
         if self.stream and self.tty:
             renderer = StreamRenderer(self.width, color=self.color)
-            state = {"first": True}
+            state = {"first": True, "model": selected["name"]}
 
             def on_delta(chunk: str) -> None:
                 if state["first"]:
                     self.out.write("\r\033[K")
+                    print(self.pal.bold(f"agent · {state['model']}"))
                     state["first"] = False
                 renderer.feed(chunk)
 
-            self.out.write(self.pal.dim("  · думает…"))
+            self.out.write(self.pal.dim("agent · thinking…"))
             self.out.flush()
             try:
                 reply = client.ask(prompt, on_delta=on_delta)
@@ -421,9 +426,10 @@ class App:
                 self.out.write("\r\033[K")
                 renderer.finish()
                 partial = client.last_text.strip()
-                print(self.pal.yellow("  ⏹ остановлено"))
+                print(self.pal.yellow("sys   ⏹ stopped"))
                 if partial:
                     self.chat.add("assistant", partial + "\n\n…", model=client.last_model_name)
+                    self.last_answer = partial
                     self._save()
                 return
             except GeminiError as exc:
@@ -436,10 +442,11 @@ class App:
                     self.out.flush()
             renderer.finish()
         else:
+            print(self.pal.bold(f"agent · {selected['name']}"))
             try:
                 reply = client.ask(prompt)
             except KeyboardInterrupt:
-                print(self.pal.yellow("  ⏹ остановлено"))
+                print(self.pal.yellow("sys   ⏹ stopped"))
                 return
             except GeminiError as exc:
                 self._error(exc)
@@ -450,17 +457,18 @@ class App:
                 print(reply.text)
 
         self.chat.add("assistant", reply.text, model=reply.model)
+        self.last_answer = reply.text
         self._save()
         print(
             self.pal.dim(
-                f"  ─ {reply.model} · {reply.elapsed:.1f} с · {reply.chars} симв."
+                f"        {reply.chars} chars · {reply.elapsed:.1f}s · model {reply.model} · /copy"
             )
         )
         self._maybe_summarize()
 
     def _error(self, exc: Exception) -> None:
-        print(self.pal.red(f"  ⚠ {exc}"))
-        print(self.pal.dim("  /retry — повторить · /model — сменить модель · /help"))
+        print(self.pal.red(f"agent ! error: {exc}"))
+        print(self.pal.dim("sys   /retry · /model · /help"))
 
     def _maybe_summarize(self) -> None:
         candidates = summary_candidates(
@@ -471,18 +479,17 @@ class App:
         if not candidates:
             return
         messages, new_upto = candidates
-        print(self.pal.dim("  🗜  сжимаю старую часть диалога в память…"))
+        print(self.pal.dim("sys   compressing older dialog into summary…"))
         try:
             client = Gemini("lite", timeout=float(self.cfg["timeout"]))
             reply = client.ask(make_summary_prompt(messages, self.chat.summary))
         except (GeminiError, KeyboardInterrupt):
-            print(self.pal.dim("  не получилось — попробую позже"))
+            print(self.pal.dim("sys   summary failed, will retry later"))
             return
-        # В промпт уже передавался старый пересказ, поэтому новый его заменяет.
         self.chat.summary = reply.text.strip()
         self.chat.summary_upto = new_upto
         self._save()
-        print(self.pal.dim(f"  память обновлена: {len(messages)} сообщений сжато"))
+        print(self.pal.dim(f"sys   summary updated: {len(messages)} messages"))
 
     # ── команды ────────────────────────────────────────────────────────
     def command(self, line: str) -> str | None:
@@ -532,6 +539,8 @@ class App:
             self._stats()
         elif cmd == "check":
             self._check()
+        elif cmd == "update":
+            self._update()
         elif cmd == "agent":
             self._agent(arg)
         elif cmd in ("agentchat", "achat"):
@@ -552,21 +561,23 @@ class App:
             self._backups()
         elif cmd == "stream":
             self._stream(arg)
+        elif cmd == "copy":
+            self._copy(arg)
         elif cmd in ("about", "version"):
             self._about()
         else:
-            print(self.pal.red(f"  неизвестная команда: /{cmd}"))
-            print(self.pal.dim("  /help — список команд"))
+            print(self.pal.red(f"  sys  unknown command: /{cmd}"))
+            print(self.pal.dim("  sys  /help — list commands"))
         return None
 
     def _help(self) -> None:
         print()
-        print(self.pal.bold("  Команды"))
+        print(self.pal.bold("Commands"))
         for name, desc in HELP:
             print(f"  {self.pal.cyan(name.ljust(20))} {desc}")
         print()
-        print(self.pal.dim("  Перенос строки в запросе — обратный слэш \\ в конце."))
-        print(self.pal.dim("  Ctrl-C во время ответа останавливает генерацию."))
+        print(self.pal.dim("  Multiline input: end a line with \\"))
+        print(self.pal.dim("  Ctrl-C during response stops generation."))
         print()
 
     def _new(self, title: str) -> None:
@@ -576,36 +587,36 @@ class App:
 
             self.chat = Chat(
                 id="ephemeral-" + uuid.uuid4().hex[:8],
-                title=title or "Новый чат",
+                title=title or "New chat",
                 model=self.chat.model,
                 system=self.chat.system,
             )
         else:
             self.chat = self.store.new(
-                title=title or "Новый чат",
+                title=title or "New chat",
                 model=self.chat.model,
                 system=self.chat.system,
             )
         if not self.ephemeral:
             self.cfg["last_chat"] = self.chat.id
             save_config(self.cfg)
-        print(self.pal.green(f"  ✓ новый чат: {self.chat.title}"))
-        print(self.pal.dim(f"  id: {self.chat.id}"))
+        print(self.pal.green(f"sys   ✓ new chat: {self.chat.title}"))
+        print(self.pal.dim(f"      id: {self.chat.id}"))
 
     def _chats(self) -> None:
         items = self.store.list()
         if not items:
-            print(self.pal.dim("  чатов пока нет"))
+            print(self.pal.dim("sys   no chats yet"))
             return
         print()
-        print(self.pal.bold("  Чаты"))
+        print(self.pal.bold("Chats"))
         for index, item in enumerate(items, 1):
             mark = self.pal.green("●") if item["id"] == self.chat.id else " "
             summary = self.pal.magenta("≡") if item["summary"] else " "
             title = item["title"][:44]
             print(
                 f"  {mark} {str(index).rjust(2)}. {title.ljust(46)} "
-                f"{str(item['count']).rjust(3)} сообщ.  {human_time(item['updated'])} {summary}"
+                f"{str(item['count']).rjust(3)} msgs  {human_time(item['updated'])} {summary}"
             )
         print()
         print(self.pal.dim(f"  открыть: /open <номер>   папка: {CHATS_DIR}"))
@@ -1240,11 +1251,68 @@ class App:
         save_config(self.cfg)
         print(self.pal.green(f"  ✓ стриминг: {'вкл' if self.stream else 'выкл'}"))
 
+    def _copy(self, arg: str = "") -> None:
+        text = (self.last_answer or "").strip()
+        if not text:
+            print(self.pal.dim("sys   nothing to copy"))
+            return
+        if self._copy_to_clipboard(text):
+            print(self.pal.green(f"sys   ✓ copied to clipboard ({len(text)} chars)"))
+        else:
+            print(self.pal.red("sys   clipboard unavailable (install wl-copy/xclip/pbcopy or use Windows)"))
+
+    def _copy_to_clipboard(self, text: str) -> bool:
+        try:
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["clip"], input=text.encode("utf-16-le"), check=True,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                return True
+            for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"], ["pbcopy"]):
+                if shutil.which(cmd[0]):
+                    subprocess.run(cmd, input=text.encode("utf-8"), check=True,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def _update(self) -> None:
+        from .update import check_update, install_update
+
+        print(self.pal.dim("sys   checking for updates…"))
+        info = check_update(timeout=12.0)
+        if info.error:
+            print(self.pal.red(f"sys   ✗ could not check: {info.error}"))
+            return
+        if not info.available:
+            if info.latest and info.ahead:
+                print(self.pal.green(f"sys   ✓ local version is ahead ({info.current} > GitHub {info.latest})"))
+            else:
+                print(self.pal.green(f"sys   ✓ up to date ({info.current})"))
+                if info.latest:
+                    print(self.pal.dim(f"      latest: {info.latest}"))
+            return
+
+        print(self.pal.yellow(f"sys   update available: {info.latest} (current {info.current})"))
+        print(self.pal.dim(f"      {info.url}"))
+        if not self._confirm("sys   Install now?"):
+            print(self.pal.dim("sys   skipped"))
+            return
+        print(self.pal.dim("sys   installing update…"))
+        ok, msg = install_update(timeout=180.0)
+        if ok:
+            print(self.pal.green(f"sys   ✓ {msg}"))
+            print(self.pal.dim("sys   restart ExelCode to use the new version"))
+        else:
+            print(self.pal.red(f"sys   ✗ {msg}"))
+
     def _about(self) -> None:
         print()
-        print(f"  {self.pal.bold('ai-free')} {__version__} — Gemini без ключа")
-        print(self.pal.dim("  веб-протокол gemini.google.com, только стандартная библиотека Python"))
-        print(self.pal.dim(f"  данные: {DATA_DIR}"))
+        print(f"  {self.pal.bold('ExelCode')} {__version__} — Gemini, no key")
+        print(self.pal.dim("  web protocol gemini.google.com, Python standard library only"))
+        print(self.pal.dim(f"  data: {DATA_DIR}"))
         print()
 
     # ── служебное ──────────────────────────────────────────────────────
@@ -1263,19 +1331,26 @@ class App:
         save_config(self.cfg)
 
     def banner(self) -> None:
-        title = f" ai-free {__version__} · Gemini без ключа "
-        width = min(self.width - 4, max(46, len(title) + 4))
-        top = "╭" + "─" * width + "╮"
-        mid = "│" + title.center(width) + "│"
-        bottom = "╰" + "─" * width + "╯"
+        title = f" ExelCode {__version__} "
+        chat = (self.chat.title or "New chat")[:28]
         model = resolve_model(self.chat.model)["name"]
+        width = min(max(self.width - 2, 56), 80)
+        inner = width - 2
+
+        def row(text: str) -> str:
+            text = text[:inner]
+            return "│" + text.ljust(inner) + "│"
+
+        stream = "on" if self.stream else "off"
+        smart = "on" if self.smart_route else "off"
+        mode = AGENT_MODE_NAMES.get(self.agent_mode, self.agent_mode)
+        ws = str(self.workspace)
+        if len(ws) > 28:
+            ws = "…" + ws[-27:]
         print()
-        print(self.pal.cyan("  " + top))
-        print(self.pal.cyan("  " + mid))
-        print(self.pal.cyan("  " + bottom))
-        print(
-            self.pal.dim(
-                f"  чат: {self.chat.title[:40]} · модель: {model} · /help"
-            )
-        )
+        print(self.pal.cyan("╭" + "─" + title.ljust(inner - 1, "─") + "╮"))
+        print(self.pal.cyan(row(f" chat: {chat} · model: auto→{model} · stream {stream}")))
+        print(self.pal.cyan(row(f" smart {smart} · agent {mode} · ws: {ws or '-'}")))
+        print(self.pal.cyan(row(" " * (inner - 11) + "/help menu")))
+        print(self.pal.cyan("╰" + "─" * inner + "╯"))
         print()

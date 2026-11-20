@@ -65,6 +65,13 @@ class WorkspaceTests(unittest.TestCase):
             with self.assertRaises(AgentError):
                 ws.read_text("a.txt", start=99, end=100)
 
+    def test_read_normalizes_crlf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Workspace(tmp)
+            (ws.root / "win.txt").write_bytes(b"one\r\ntwo\r\nthree\r\n")
+            self.assertEqual(ws.read_text("win.txt"), "one\ntwo\nthree\n")
+            self.assertEqual(ws.read_text("win.txt:2-3"), "two\nthree\n")
+
 
 class ParserTests(unittest.TestCase):
     def test_protocol(self):
@@ -182,6 +189,18 @@ class ExecutorTests(unittest.TestCase):
                 self.assertFalse((root / "new.py").exists())
                 self.assertEqual((root / "gone.py").read_text(encoding="utf-8"), "x\n")
 
+    def test_patch_keeps_crlf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ws = Workspace(root)
+            (root / "win.py").write_bytes(b"a = 1\r\nb = 2\r\n")
+            prepared = prepare_ops(
+                ws, [FileOp("patch", "win.py", hunks=[("b = 2\n", "b = 3\n")])]
+            )
+            with tempfile.TemporaryDirectory() as backup_tmp:
+                apply_prepared(ws, prepared, Path(backup_tmp))
+            self.assertEqual((root / "win.py").read_bytes(), b"a = 1\r\nb = 3\r\n")
+
 
 class FakeClient:
     def __init__(self, replies):
@@ -289,6 +308,14 @@ class AgentTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("hi", out)
             self.assertGreaterEqual(elapsed, 0.0)
+
+    def test_execute_command_utf8_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "say.py"
+            script.write_text('print("привет ✓")\n', encoding="utf-8")
+            code, out, _ = execute_command("python3 say.py", tmp, timeout=20)
+            self.assertEqual(code, 0)
+            self.assertIn("привет ✓", out)
 
 
 if __name__ == "__main__":

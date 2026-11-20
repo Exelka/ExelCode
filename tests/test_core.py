@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from aifree.console import IS_WINDOWS, adapt_command, decode_output, normalize_newlines
 from aifree.gemini import GeminiError, is_failure_reply, resolve_model
 from aifree.highlight import highlight_line, new_state
 from aifree.prompt import build_prompt, make_summary_prompt, summary_candidates
@@ -70,7 +71,7 @@ class PromptTests(unittest.TestCase):
         messages, upto = result
         self.assertEqual(upto, 14)
         self.assertEqual(len(messages), 14)
-        self.assertIn("Фрагмент", make_summary_prompt(messages))
+        self.assertIn("Fragment", make_summary_prompt(messages))
 
 
 class GeminiTests(unittest.TestCase):
@@ -133,7 +134,25 @@ class RenderTests(unittest.TestCase):
         renderer.finish()
         result = buffer.getvalue()
         self.assertIn("\033[1;35mdef", result)
-        self.assertIn("code python", result)
+        self.assertIn("python", result)
+
+
+class ConsoleTests(unittest.TestCase):
+    def test_normalize_newlines(self):
+        self.assertEqual(normalize_newlines("a\r\nb\rc\nd"), "a\nb\nc\nd")
+        self.assertEqual(normalize_newlines("без переносов"), "без переносов")
+
+    def test_decode_output(self):
+        self.assertEqual(decode_output("привет ✓".encode("utf-8")), "привет ✓")
+        self.assertEqual(decode_output(b""), "")
+
+    def test_adapt_command_plain_command(self):
+        self.assertEqual(adapt_command("pytest -q"), "pytest -q")
+
+    def test_adapt_command_python3(self):
+        result = adapt_command("python3 -m pytest -q")
+        self.assertTrue(result.endswith("-m pytest -q"))
+        self.assertEqual(result == "python3 -m pytest -q", not IS_WINDOWS)
 
 
 if __name__ == "__main__":

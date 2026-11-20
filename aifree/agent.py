@@ -1,4 +1,4 @@
-"""Агент: исследует проект, меняет файлы и запускает проверки.
+"""Agent: explores the project, edits files, and runs checks.
 
 У анонимного Gemini нет нативного tool calling, поэтому протокол текстовый:
 
@@ -21,7 +21,7 @@
     ```
 
 Все пути проверяются, секреты и служебные папки запрещены, перед записью
-делается резервная копия. Команды запускаются только с подтверждения.
+a backup is created. Commands run only with confirmation.
 """
 
 from __future__ import annotations
@@ -41,6 +41,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .config import DATA_DIR, atomic_write
+from .console import (
+    IS_WINDOWS,
+    adapt_command,
+    decode_output,
+    normalize_newlines,
+    utf8_child_env,
+)
 from .gemini import Gemini
 from .render import Palette
 
@@ -49,6 +56,8 @@ MAX_READ_BYTES = 2_000_000
 MAX_RUN_OUTPUT = 8000
 DEFAULT_RUN_TIMEOUT = 60.0
 AGENT_MODES = ("ask", "auto", "dry-run")
+# Имя интерпретатора в примерах команд: в Windows нет python3.
+PYTHON_CMD = "python" if IS_WINDOWS else "python3"
 
 IGNORED_DIRS = {
     ".git",
@@ -468,6 +477,10 @@ class Workspace:
         except UnicodeDecodeError:
             text = data.decode("utf-8", "replace")
 
+        # Модель, diff и патчи работают с LF: файлы, сохранённые на Windows
+        # с CRLF, иначе не совпадут с SEARCH из ответа модели.
+        text = normalize_newlines(text)
+
         if start is None and end is None:
             return text
 
@@ -831,6 +844,24 @@ def diff_for(item: PreparedFile) -> list[str]:
     )
 
 
+def detect_newline(path: Path) -> str:
+    """Перевод строки файла: CRLF (Windows) или LF."""
+    try:
+        with open(path, "rb") as handle:
+            chunk = handle.read(65536)
+    except OSError:
+        return "\n"
+    return "\r\n" if b"\r\n" in chunk else "\n"
+
+
+def with_newline(text: str, newline: str) -> str:
+    """Приводит текст к LF и расставляет нужный перевод строки."""
+    text = normalize_newlines(text)
+    if newline == "\n":
+        return text
+    return text.replace("\n", newline)
+
+
 def apply_prepared(
     workspace: Workspace,
     prepared: list[PreparedFile],
@@ -876,7 +907,10 @@ def apply_prepared(
                 except FileNotFoundError:
                     pass
             else:
-                atomic_write(target, item.new)
+                # Сохраняем исходный перевод строки файла, чтобы патч не
+                # превращал весь CRLF-файл в LF.
+                newline = detect_newline(target) if item.old is not None else "\n"
+                atomic_write(target, with_newline(item.new, newline))
         manifest["status"] = "applied"
         manifest["applied_at"] = time.time()
         atomic_write(
@@ -964,6 +998,7 @@ def execute_command(
     max_chars: int = MAX_RUN_OUTPUT,
 ) -> tuple[int, str, float]:
     """Запускает команду в cwd. Возвращает (код, вывод, длительность)."""
+    cmd = adapt_command(cmd)
     cwd = Path(cwd)
     started = time.time()
     try:
@@ -972,24 +1007,24 @@ def execute_command(
             shell=True,
             cwd=str(cwd),
             capture_output=True,
-            text=True,
             timeout=timeout,
-            errors="replace",
+            env=utf8_child_env(),
         )
-        output = proc.stdout or ""
+        output = decode_output(proc.stdout or b"")
         if proc.stderr:
+            err = decode_output(proc.stderr)
             if output and not output.endswith("\n"):
                 output += "\n"
-            output += proc.stderr
+            output += err
         code = int(proc.returncode)
     except subprocess.TimeoutExpired as exc:
-        output = (exc.stdout or "") + (exc.stderr or "")
+        output = decode_output(exc.stdout or b"") + decode_output(exc.stderr or b"")
         if output and not output.endswith("\n"):
             output += "\n"
-        output += f"[таймаут {timeout:g} с]"
+        output += f"[timeout {timeout:g}s]"
         code = 124
     except Exception as exc:  # noqa: BLE001
-        output = f"[ошибка запуска: {exc}]"
+        output = f"[launch error: {exc}]"
         code = 1
     elapsed = time.time() - started
     output = output.replace("\r\n", "\n")
@@ -1009,13 +1044,13 @@ def format_run_feedback(cmd: str, code: int, output: str, elapsed: float) -> str
 
 def _format_files(files: dict[str, str], limit: int) -> str:
     if not files:
-        return "(файлы ещё не прочитаны)"
+        return "(no files read yet)"
     parts: list[str] = []
     used = 0
     for rel, content in files.items():
         block = f"--- {rel} ---\n{content}\n"
         if used + len(block) > limit:
-            parts.append(f"--- {rel} ---\n[не показан: лимит контекста]\n")
+            parts.append(f"--- {rel} ---\n[omitted: context limit]\n")
             continue
         parts.append(block)
         used += len(block)
@@ -1029,30 +1064,30 @@ def build_research_prompt(
     context_chars: int = 30000,
 ) -> str:
     budget = max(4000, context_chars - len(tree) - 3000)
-    return f"""Ты — автономный coding-агент ai-free.
-Ты работаешь в локальной папке проекта. Задача пользователя:
+    return f"""You are ExelCode, an autonomous coding agent.
+You work in a local project directory. User task:
 <task>
 {task}
 </task>
 
-Дерево файлов (относительные пути):
+File tree (relative paths):
 <tree>
 {tree}
 </tree>
 
-Уже прочитанные файлы:
+Already read files:
 <files>
 {_format_files(files, budget)}
 </files>
 
-Сейчас ФАЗА 1 — исследование. Файлы менять нельзя.
-Если для задачи нужно посмотреть файлы, выведи до 8 строк строго такого вида:
-READ: относительный/путь.py
-Для большого файла можно запросить фрагмент:
-READ: относительный/путь.py:1-120
-Если контекста достаточно, выведи одну строку:
+PHASE 1 — research. Do not modify files.
+If you need to inspect files, output up to 8 lines in this exact form:
+READ: relative/path.py
+For a large file you can request a range:
+READ: relative/path.py:1-120
+If context is sufficient, output exactly one line:
 READY
-Не выводи других инструкций и не предлагай изменения на этой фазе.
+Do not output anything else and do not propose changes in this phase.
 """
 
 
@@ -1065,15 +1100,15 @@ def build_edit_prompt(
     context_chars: int = 30000,
 ) -> str:
     budget = max(4000, context_chars - len(tree) - 5000)
-    applied_text = "\n".join(f"- {path}" for path in applied) or "(пока нет)"
+    applied_text = "\n".join(f"- {path}" for path in applied) or "(none yet)"
     feedback_text = f"\n<feedback>\n{feedback}\n</feedback>\n" if feedback else ""
-    return f"""Ты — автономный coding-агент ai-free.
-Ты работаешь в локальной папке проекта. Задача пользователя:
+    return f"""You are ExelCode, an autonomous coding agent.
+You work in a local project directory. User task:
 <task>
 {task}
 </task>
 
-Дерево файлов (относительные пути):
+File tree (relative paths):
 <tree>
 {tree}
 </tree>
@@ -1083,48 +1118,48 @@ def build_edit_prompt(
 {_format_files(files, budget)}
 </files>
 
-Уже применённые файлы:
+Already applied files:
 {applied_text}
 {feedback_text}
-Сейчас ФАЗА 2 — изменения. Выведи файловые блоки строго в формате Markdown.
+PHASE 2 — changes. Output file blocks strictly in Markdown format.
 
-Создать или полностью перезаписать файл:
+Create or fully overwrite a file:
 ```file path="relative/path.py"
-<полное содержимое файла>
+<full file content>
 ```
 
-Изменить часть файла:
+Modify part of a file:
 ```patch path="relative/path.py"
 <<<<<<< SEARCH
-точный старый фрагмент
+exact old fragment
 =======
-новый фрагмент
+new fragment
 >>>>>>> REPLACE
 ```
 
-Удалить файл:
+Delete a file:
 ```delete path="relative/path.py"
 ```
 
-Запросить чтение файла или фрагмента (если не хватает контекста):
+Request reading a file or range (if more context is needed):
 READ: relative/path.py
 READ: relative/path.py:1-120
 
-Запустить команду для проверки (тесты, линтер, запуск):
+Run a command to verify (tests, linter, run):
 ```run
-python3 -m pytest -q
+{PYTHON_CMD} -m pytest -q
 ```
 
-Правила:
-- только относительные пути внутри проекта; запрещены absolute, .., ~, .git, .env, ключи и бинарные файлы;
-- SEARCH должен точно совпадать с текущим файлом и встречаться ровно один раз;
-- сохраняй стиль, отступы и язык проекта;
-- можно вывести несколько блоков;
-- не повторяй уже применённые изменения без причины;
-- если после применения нужны проверки, выведи блок run; после запуска ты получишь вывод и код возврата;
-- если команда упала, исправь причину и проверь снова;
-- если делать больше нечего, выведи DONE;
-- не оборачивай весь ответ в дополнительный блок кода.
+Rules:
+- only relative paths inside the project; absolute, .., ~, .git, .env, keys and binary files are forbidden;
+- SEARCH must exactly match the current file and appear exactly once;
+- preserve project style, indentation, and language;
+- you may output multiple blocks;
+- do not repeat already applied changes without reason;
+- if checks are needed after applying, output a run block; after execution you will get output and exit code;
+- if a command fails, fix the cause and verify again;
+- if there is nothing left to do, output DONE;
+- do not wrap the entire response in an extra code block.
 """
 
 
@@ -1135,7 +1170,7 @@ def default_workspace(cfg: dict) -> Path:
 
 
 class Agent:
-    """Агент: исследование, правки, запуск проверок, исправление по результатам."""
+    """Agent: research, edits, checks, and fix iterations."""
 
     def __init__(
         self,
@@ -1192,13 +1227,13 @@ class Agent:
             print(text, file=self.out)
 
     def _ask(self, prompt: str, label: str) -> str:
-        self._print(self.pal.dim(f"  · {label}…"))
+        self._print(self.pal.dim(f"  sys  · {label}"))
         self.out.flush()
         reply = self.client.ask(prompt)
         text = reply.text if hasattr(reply, "text") else str(reply)
         model_name = getattr(reply, "model", "?")
         elapsed = getattr(reply, "elapsed", 0.0)
-        self._print(self.pal.dim(f"    {model_name} · {elapsed:.1f} с"))
+        self._print(self.pal.dim(f"    {model_name} · {elapsed:.1f}s"))
         return text
 
     def show_plan(self, prepared: list[PreparedFile]) -> None:
@@ -1210,7 +1245,7 @@ class Agent:
             "update": self.pal.yellow,
             "delete": self.pal.red,
         }
-        print(self.pal.bold("\n  План изменений:"), file=self.out)
+        print(self.pal.bold("\n  agent· plan"), file=self.out)
         for item in prepared:
             icon = colors[item.kind](icons[item.kind])
             print(f"  {icon} {item.kind:<6} {item.path}", file=self.out)
@@ -1223,7 +1258,7 @@ class Agent:
             shown = 0
             for line in lines:
                 if shown >= self.max_diff_lines:
-                    print(self.pal.dim("  … diff обрезан"), file=self.out)
+                    print(self.pal.dim("  … diff truncated"), file=self.out)
                     break
                 line = line.rstrip("\n")
                 if line.startswith(("+++", "---")):
@@ -1297,20 +1332,20 @@ class Agent:
         for cmd in runs:
             self._print(self.pal.cyan(f"  $ {cmd}"))
             if self.dry_run:
-                self._print(self.pal.yellow("    dry-run: команда не запущена"))
+                self._print(self.pal.yellow("    dry-run: command not executed"))
                 feedback_parts.append(
                     f"<run command={cmd!r} status='skipped' elapsed='0.0s'>\n"
-                    "[dry-run: команда не запускалась]\n</run>"
+                    "[dry-run: command not executed]\n</run>"
                 )
                 records.append(
                     {"cmd": cmd, "code": None, "output": "", "elapsed": 0.0, "skipped": True}
                 )
                 continue
             if not self._approve_run(cmd):
-                self._print(self.pal.dim("    пропущено"))
+                self._print(self.pal.dim("    skipped"))
                 feedback_parts.append(
                     f"<run command={cmd!r} status='skipped' elapsed='0.0s'>\n"
-                    "[пользователь отменил запуск]\n</run>"
+                    "[user cancelled execution]\n</run>"
                 )
                 records.append(
                     {"cmd": cmd, "code": None, "output": "", "elapsed": 0.0, "skipped": True}
@@ -1335,7 +1370,7 @@ class Agent:
                     print(self.pal.dim("    …"), file=self.out)
             status = "ok" if code == 0 else f"exit {code}"
             mark = self.pal.green("✓") if code == 0 else self.pal.red("✗")
-            self._print(f"  {mark} {status} · {elapsed:.1f} с")
+            self._print(f"  sys  · run     {mark} {status} · {elapsed:.1f}s")
             feedback_parts.append(format_run_feedback(cmd, code, output, elapsed))
             if code != 0:
                 failed = True
@@ -1349,12 +1384,12 @@ class Agent:
 
         # Обычный вопрос/разговор без привязки к файлам проекта — без сканирования
         if should_answer_without_scan(task):
-            self._print(self.pal.dim("  · отвечаю…"))
+            self._print(self.pal.dim("  agent · replying…"))
             self.out.flush()
             prompt = (
                 "Ты полезный ассистент. Ответь на русском, кратко и по делу. "
-                "Если вопрос о твоих возможностях — скажи, что ты ai-free: можешь "
-                "общаться, а в режиме агента создавать/изменять файлы и запускать "
+                "If asked about your capabilities, say you are ExelCode: you can "
+                "chat, and in agent mode create/edit files and run "
                 "команды в выбранной папке проекта.\n\n"
                 f"Вопрос: {task}"
             )
@@ -1365,7 +1400,7 @@ class Agent:
                 elapsed = getattr(reply, "elapsed", 0.0)
             except Exception as exc:  # noqa: BLE001
                 raise AgentError(f"не удалось получить ответ: {exc}") from exc
-            self._print(self.pal.dim(f"    {model_name} · {elapsed:.1f} с"))
+            self._print(self.pal.dim(f"    {model_name} · {elapsed:.1f}s"))
             self._print()
             if not self.quiet:
                 print(text.strip(), file=self.out)
@@ -1386,7 +1421,7 @@ class Agent:
             prompt = build_research_prompt(
                 task, self.ws.tree(), files, self.context_chars
             )
-            text = self._ask(prompt, "исследую проект")
+            text = self._ask(prompt, "scan: reading project")
             plan = parse_agent_response(text)
             if not plan.reads:
                 break
@@ -1418,7 +1453,7 @@ class Agent:
                 feedback,
                 self.context_chars,
             )
-            text = self._ask(prompt, "готовлю изменения/проверки")
+            text = self._ask(prompt, "plan: preparing changes/checks")
             last_reply = text
             plan = parse_agent_response(text)
             feedback_parts: list[str] = []
@@ -1430,7 +1465,7 @@ class Agent:
             if plan.reads:
                 for spec in plan.reads[:12]:
                     self._read_into(files, spec)
-                feedback_parts.append("Файлы прочитаны. Продолжай: внеси изменения, запусти проверку или выведи DONE.")
+                feedback_parts.append("Files read. Continue: make changes, run a check, or output DONE.")
                 progressed = True
 
             # Применение изменений
@@ -1452,9 +1487,9 @@ class Agent:
                 if prepared:
                     self.show_plan(prepared)
                     if self.dry_run:
-                        self._print(self.pal.yellow("  dry-run: файлы не изменены"))
+                        self._print(self.pal.yellow("  sys  · dry-run: files not changed"))
                         if plan.runs:
-                            self._print(self.pal.dim("  запрошенные команды (не выполнены в dry-run):"))
+                            self._print(self.pal.dim("  sys  · requested commands (not run in dry-run):"))
                             for cmd in plan.runs:
                                 self._print(self.pal.dim(f"    $ {cmd}"))
                         return AgentResult(
@@ -1467,7 +1502,7 @@ class Agent:
                             done=plan.done,
                         )
                     if not self._approve():
-                        self._print(self.pal.dim("  отменено пользователем"))
+                        self._print(self.pal.dim("  sys  · cancelled by user"))
                         return AgentResult(
                             applied=bool(applied), dry_run=False, changed=applied,
                             ran=ran, backup=backup, rounds=rounds, reply=last_reply,
@@ -1492,13 +1527,13 @@ class Agent:
                             stale = [k for k in files if k.startswith(item.path + ":")]
                             for k in stale:
                                 files.pop(k, None)
-                    self._print(self.pal.green(f"  ✓ применено: {len(prepared)} файл(ов)"))
+                    self._print(self.pal.green(f"  sys  · apply   ✓ {len(prepared)} file(s) changed"))
                     feedback_parts.append(
-                        "Изменения применены: " + ", ".join(item.path for item in prepared)
+                        "Applied changes: " + ", ".join(item.path for item in prepared)
                     )
                     progressed = True
                 else:
-                    self._print(self.pal.dim("  изменений нет"))
+                    self._print(self.pal.dim("  sys  · no changes"))
 
             # Запуск команд/проверок
             run_failed = False
@@ -1509,7 +1544,7 @@ class Agent:
                 progressed = True
                 if run_failed:
                     feedback_parts.append(
-                        "Команда завершилась с ошибкой. Исправь причину, при необходимости прочитай файлы/логи и повтори проверку или выведи DONE, если это ожидаемо."
+                        "Command failed. Fix the cause, read files/logs if needed, then verify again or output DONE if this is expected."
                     )
 
             if progressed:

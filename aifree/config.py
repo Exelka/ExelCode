@@ -6,16 +6,38 @@ import json
 import os
 from pathlib import Path
 
-APP_NAME = "ai-free"
+APP_NAME = "ExelCode"
 
-DATA_DIR = Path(os.environ.get("AIFREE_HOME", Path.home() / ".local" / "share" / APP_NAME))
+
+def _default_home() -> Path:
+    """Data directory: XDG on Unix, LocalAppData on Windows."""
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local"
+        return Path(base) / APP_NAME
+    return Path.home() / ".local" / "share" / APP_NAME.lower()
+
+
+def _default_config_file() -> Path:
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming"
+        return Path(base) / APP_NAME / "config.json"
+    return Path.home() / ".config" / APP_NAME.lower() / "config.json"
+
+
+DATA_DIR = Path(
+    os.environ.get("EXELCODE_HOME")
+    or os.environ.get("AIFREE_HOME")
+    or _default_home()
+)
 CHATS_DIR = DATA_DIR / "chats"
 EXPORTS_DIR = DATA_DIR / "exports"
 BACKUPS_DIR = DATA_DIR / "backups"
 HISTORY_FILE = DATA_DIR / "history"
 MEMORY_FILE = DATA_DIR / "memory.json"
 CONFIG_FILE = Path(
-    os.environ.get("AIFREE_CONFIG", Path.home() / ".config" / APP_NAME / "config.json")
+    os.environ.get("EXELCODE_CONFIG")
+    or os.environ.get("AIFREE_CONFIG")
+    or _default_config_file()
 )
 
 DEFAULTS = {
@@ -65,5 +87,8 @@ def save_config(cfg: dict) -> None:
 def atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
+    # newline="" — писать ровно те символы, что передали: иначе Windows
+    # превратит "\n" в "\r\n" и попортит файлы с CRLF (двойной \r).
+    with open(tmp, "w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
     os.replace(tmp, path)

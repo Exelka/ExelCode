@@ -1,4 +1,4 @@
-"""Отрисовка markdown в терминале: цвета, переносы, стриминг по строкам."""
+"""Terminal markdown rendering: colors, wrapping, streaming."""
 
 from __future__ import annotations
 
@@ -66,6 +66,19 @@ def strip_inline(text: str) -> str:
     return text
 
 
+def _box_top(label: str, width: int) -> str:
+    inner = max(10, width - 2)
+    text = f"─ {label} " if label else "─"
+    if len(text) > inner:
+        text = text[: inner - 1] + "…"
+    return "┌" + text + "─" * max(0, inner - len(text)) + "┐"
+
+
+def _box_bottom(width: int) -> str:
+    inner = max(10, width - 2)
+    return "└" + "─" * inner + "┘"
+
+
 class MarkdownRenderer:
     def __init__(self, width: int | None = None, color: bool = True):
         self.width = width or terminal_width()
@@ -74,42 +87,48 @@ class MarkdownRenderer:
         self.code_lang = ""
         self.code_state = new_state()
 
-    # ── одна строка ────────────────────────────────────────────────────
+    def _box_width(self) -> int:
+        return max(24, min(self.width, 78))
+
+    # ── one line ───────────────────────────────────────────────────────
     def line(self, raw: str) -> str:
         raw = raw.rstrip()
         stripped = raw.strip()
 
         if stripped.startswith("```"):
+            bw = self._box_width()
             if self.in_code:
                 self.in_code = False
                 self.code_lang = ""
-                return self.pal.dim("  └" + "─" * min(24, self.width - 4))
+                return self.pal.dim(_box_bottom(bw))
             self.in_code = True
             self.code_lang = stripped[3:].strip()
             self.code_state = new_state()
-            label = f" {self.code_lang}" if self.code_lang else ""
-            return self.pal.dim("  ┌─ code" + label)
+            label = self.code_lang or "code"
+            return self.pal.dim(_box_top(label, bw))
 
         if self.in_code:
-            width = max(20, self.width - 4)
+            bw = self._box_width()
+            inner = max(10, bw - 4)
+            text = raw.replace("\t", "    ")
             chunks = textwrap.wrap(
-                raw.replace("\t", "    "),
-                width=width,
+                text,
+                width=inner,
                 replace_whitespace=False,
                 drop_whitespace=False,
                 break_long_words=True,
             ) or [""]
-            painted = [
-                self.pal.dim("  │ ")
-                + highlight_line(
+            out = []
+            for part in chunks:
+                painted = highlight_line(
                     part,
                     self.code_lang,
                     self.code_state,
                     enabled=self.pal.enabled,
                 )
-                for part in chunks
-            ]
-            return "\n".join(painted)
+                pad = " " * max(0, inner - len(part))
+                out.append(self.pal.dim("│ ") + painted + pad + self.pal.dim(" │"))
+            return "\n".join(out)
 
         if not stripped:
             return ""
@@ -121,29 +140,25 @@ class MarkdownRenderer:
             return color(self.pal.bold(text))
 
         if re.fullmatch(r"[-*_]{3,}", stripped):
-            return self.pal.dim("  " + "─" * max(10, self.width - 4))
+            return self.pal.dim("─" * max(10, self.width - 2))
 
         bullet = re.match(r"^(\s*)[-*+]\s+(.*)$", raw)
         if bullet:
             indent = bullet.group(1)
             body = strip_inline(bullet.group(2))
-            prefix = indent + "  "
-            avail = max(20, self.width - len(prefix) - 2)
+            avail = max(20, self.width - len(indent) - 4)
             chunks = textwrap.wrap(
                 body, width=avail, break_long_words=False, break_on_hyphens=False
             ) or [""]
-            first = prefix + self.pal.cyan("•") + " " + chunks[0]
-            rest = [
-                prefix + "  " + part
-                for part in chunks[1:]
-            ]
+            first = indent + self.pal.cyan("•") + " " + chunks[0]
+            rest = [indent + "  " + part for part in chunks[1:]]
             return "\n".join([first] + rest)
 
         numbered = re.match(r"^(\s*)(\d+)[.)]\s+(.*)$", raw)
         if numbered:
             indent, number, body = numbered.groups()
             prefix = f"{indent}{number}. "
-            avail = max(20, self.width - len(prefix))
+            avail = max(20, self.width - len(prefix) - 2)
             chunks = textwrap.wrap(
                 strip_inline(body),
                 width=avail,
@@ -160,7 +175,7 @@ class MarkdownRenderer:
             chunks = textwrap.wrap(
                 body, width=max(20, self.width - 4), break_long_words=False
             ) or [""]
-            return "\n".join(self.pal.dim("  │ " + part) for part in chunks)
+            return "\n".join(self.pal.dim("│ " + part) for part in chunks)
 
         if stripped.startswith("|") and stripped.endswith("|"):
             return self.pal.dim(stripped[: self.width])
@@ -177,7 +192,7 @@ class MarkdownRenderer:
             or [""]
         )
 
-    # ── весь текст ─────────────────────────────────────────────────────
+    # ── full text ──────────────────────────────────────────────────────
     def text(self, text: str) -> str:
         lines = []
         for raw in text.replace("\r\n", "\n").split("\n"):
@@ -188,7 +203,7 @@ class MarkdownRenderer:
 
 
 class StreamRenderer:
-    """Печатает ответ по мере поступления, по целым строкам."""
+    """Prints response as it arrives, line by line."""
 
     def __init__(self, width: int | None = None, color: bool = True, out=None):
         self.md = MarkdownRenderer(width=width, color=color)
@@ -226,5 +241,5 @@ class StreamRenderer:
             self.out.flush()
             self.last_blank = True
         if not self.any_text:
-            self.out.write(self.md.pal.dim("  (пустой ответ)") + "\n")
+            self.out.write(self.md.pal.dim("(empty response)") + "\n")
             self.out.flush()

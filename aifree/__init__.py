@@ -1,3 +1,3 @@
-"""ai-free — консольный ИИ-чат на Gemini без ключа."""
+"""ExelCode — console AI chat and coding agent on Gemini (no key)."""
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"

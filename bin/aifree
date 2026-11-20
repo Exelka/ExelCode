@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Запуск ai-free из любой папки.
+# Run ExelCode from any directory.
 set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 exec python3 "$DIR/main.py" "$@"

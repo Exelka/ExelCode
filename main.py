@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Точка входа ai-free."""
+"""ExelCode entry point."""
 
 import sys
 

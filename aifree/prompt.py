@@ -1,13 +1,13 @@
-"""Сборка промпта: роль, память, пересказ старой части, история, вопрос."""
+"""Prompt assembly: role, memory, summary, history, question."""
 
 from __future__ import annotations
 
 from .store import Chat, Message
 
 DEFAULT_SYSTEM = (
-    "Ты — полезный ИИ-ассистент. Отвечай по-русски, кратко и по делу. "
-    "Если нужен код — давай рабочий код с коротким пояснением. "
-    "Не выдумывай факты; если не уверен, скажи об этом."
+    "You are a helpful AI assistant. Answer clearly and concisely. "
+    "If code is needed, provide working code with a short explanation. "
+    "Do not invent facts; if you are unsure, say so."
 )
 
 
@@ -42,7 +42,7 @@ def build_prompt(
     selected: list[str] = []
     used = 0
     for msg in reversed(chat.context_messages()):
-        who = "Пользователь" if msg.role == "user" else "Ассистент"
+        who = "User" if msg.role == "user" else "Assistant"
         block = f"{who}: {msg.content.strip()}"
         if used + len(block) + 2 > budget:
             if not selected:
@@ -58,8 +58,8 @@ def build_prompt(
 
     parts.append(tail)
     parts.append(
-        "Ответь на последнее сообщение пользователя. "
-        "Не упоминай служебные теги <system>, <memory>, <summary>, <dialogue>."
+        "Reply to the user's latest message. "
+        "Do not mention the internal tags <system>, <memory>, <summary>, <dialogue>."
     )
     return "\n\n".join(parts)
 
@@ -69,7 +69,7 @@ def summary_candidates(
     after_messages: int = 16,
     keep_recent: int = 6,
 ) -> tuple[list[Message], int] | None:
-    """Возвращает сообщения для пересказа и новый summary_upto."""
+    """Return messages to summarize and the new summary_upto."""
     pending = chat.messages[chat.summary_upto:]
     if len(pending) <= after_messages:
         return None
@@ -82,16 +82,15 @@ def summary_candidates(
 def make_summary_prompt(messages: list[Message], previous: str = "") -> str:
     transcript = []
     for msg in messages:
-        who = "Пользователь" if msg.role == "user" else "Ассистент"
+        who = "User" if msg.role == "user" else "Assistant"
         transcript.append(f"{who}: {msg.content.strip()}")
     body = "\n\n".join(transcript)
     if len(body) > 18000:
         body = body[-18000:]
-    prev = f"Предыдущее содержание:\n{previous.strip()}\n\n" if previous else ""
+    prev = f"Previous summary:\n{previous.strip()}\n\n" if previous else ""
     return (
-        "Сожми фрагмент диалога в краткое содержание на русском.\n"
-        "Сохрани: факты о пользователе, его цели, договорённости, важные детали, "
-        "принятые решения и незакрытые вопросы. Убери воду и повторы.\n"
-        "Пиши 5–10 пунктов, каждый с новой строки, без вступлений.\n\n"
-        f"{prev}Фрагмент:\n{body}\n\nКраткое содержание:"
+        "Summarize this dialog fragment briefly.\n"
+        "Keep: user facts, goals, agreements, important details, decisions, and open questions.\n"
+        "Write 5-10 bullet points, one per line, no preamble.\n\n"
+        f"{prev}Fragment:\n{body}\n\nSummary:"
     )

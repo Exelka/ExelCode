@@ -1,19 +1,20 @@
-# ai-free
+# ExelCode
 
-Консольный ИИ-чат на Gemini **без API-ключа, cookies и сторонних библиотек**.
-Использует анонимный веб-протокол `gemini.google.com` — тот же обход, что и в
-`weather.py`.
+Консольный ИИ-чат и coding-агент на Gemini **без API-ключа, cookies и сторонних библиотек**.
+Использует анонимный веб-протокол `gemini.google.com`.
 
 ```
-  ╭────────────────────────────────────────────╮
-  │      ai-free 1.3.0 · Gemini без ключа      │
-  ╰────────────────────────────────────────────╯
-  чат: Планы на неделю · модель: Auto · /help
+╭─ ExelCode 1.4.0 ──────────────────────────────────────────────╮
+│ chat: New chat · model: auto→3.5 Flash-Lite · stream on      │
+│ smart off · agent ask · ws: —                      /help menu │
+╰───────────────────────────────────────────────────────────────╯
 
-вы › привет, кто ты?
-  🤖 Auto
-  Привет! Я ИИ-ассистент на базе Gemini...
-  ─ 3.5 Flash-Lite · 2.1 с · 418 симв.
+user › explain HTTP/2 in simple terms, briefly
+
+agent · 3.5 Flash-Lite · 1.8s
+        HTTP/2 is a newer version of the protocol used to load web pages.
+        • multiplexing, header compression (HPACK), server push
+        286 chars · 1.8s · model 3.5 Flash-Lite · /copy
 ```
 
 ## Возможности
@@ -37,7 +38,7 @@
 ## Запуск
 
 ```bash
-cd ai-free
+cd ExelCode
 python3 main.py
 ```
 
@@ -53,6 +54,26 @@ python3 main.py
 python3 main.py -p "объясни, что такое HTTP/2, в двух абзацах"
 python3 main.py -p "..." --json
 ```
+
+### Windows
+
+```bat
+cd ExelCode
+python main.py
+:: или через лаунчер
+bin\aifree.cmd
+```
+
+- нужен Python 3.9+ из `python.org` или Microsoft Store (необязательно);
+- в примерах ниже `python3` заменяйте на `python` — агент подменяет
+  `python3` на текущий интерпретатор сам, когда запускает проверки;
+- данные лежат в `%LOCALAPPDATA%\ExelCode`, конфиг — в
+  `%APPDATA%\ExelCode\config.json` (поддерживаются и старые `AIFREE_*`/пути `ai-free` как fallback через env);
+- вывод переключается в UTF-8, ANSI-цвета включаются автоматически
+  в Windows 10+ (в старом `cmd.exe` без VT цвета отключаются флагом
+  `--no-color`);
+- автодополнение по `Tab` и история ввода требуют `readline` и работают
+  в Linux/Termux; в Windows остальные команды доступны без изменений.
 
 Полезные флаги:
 
@@ -255,17 +276,18 @@ hex-id в `aifree/gemini.py` → `MODELS`.
 ## Где лежат данные
 
 ```
-~/.local/share/ai-free/
-├── chats/<id>.json      # чаты
-├── memory.json          # долговременная память
-├── exports/             # экспорт в markdown
-├── backups/             # бэкапы агента
-└── history              # история ввода readline
+~/.local/share/exelcode/
+├── chats/<id>.json      # chats
+├── memory.json          # long-term memory
+├── exports/             # markdown exports
+├── backups/             # agent backups
+└── history              # readline history
 
-~/.config/ai-free/config.json   # модель, стриминг, последний чат
+~/.config/exelcode/config.json   # model, stream, last chat
 ```
 
-Переопределить можно переменными `AIFREE_HOME` и `AIFREE_CONFIG`.
+Override with `EXELCODE_HOME` / `EXELCODE_CONFIG` (legacy `AIFREE_HOME` / `AIFREE_CONFIG` also supported).
+On Windows by default: `%LOCALAPPDATA%\ExelCode\` for data and `%APPDATA%\ExelCode\config.json` for config.
 
 ## Как это работает
 
@@ -290,31 +312,23 @@ hex-id в `aifree/gemini.py` → `MODELS`.
 
 ## Тесты
 
-Быстрые тесты без сети (31+ тестов):
+Быстрые тесты без сети (38 тестов):
 
 ```bash
 python3 -m unittest discover -s tests -v
+python -m unittest discover -s tests -v   # Windows
 ```
 
 ## Структура
 
 ```
-ai-free/
-├── main.py              # точка входа
-├── bin/aifree           # лаунчер
-├── aifree/
-│   ├── cli.py           # аргументы командной строки
-│   ├── ui.py            # REPL, команды
-│   ├── gemini.py        # анонимный клиент Gemini + стриминг
-│   ├── prompt.py        # сборка промпта и пересказ
-│   ├── store.py         # чаты, память, экспорт
-│   ├── render.py        # markdown и цвета
-│   ├── highlight.py     # подсветка синтаксиса без зависимостей
-│   ├── agent.py         # агент: чтение файлов, правки, бэкап, откат
-│   └── config.py        # пути и конфиг
-├── tests/test_core.py   # тесты без сети
-├── tests/test_agent.py  # тесты агента без сети
-└── README.md
+ExelCode/
+├── main.py              # entry point
+├── bin/aifree(.cmd)     # launcher
+├── aifree/              # core package (cli, ui, gemini, agent, store, prompt, render, highlight, config, console)
+├── tests/               # offline tests
+├── README.md
+└── ПРОГРЕСС.md
 ```
 
 ## Если что-то сломалось

@@ -1,4 +1,4 @@
-"""Хранение чатов и долговременной памяти (JSON, без БД)."""
+"""Chat and long-term memory storage (JSON, no database)."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ class Message:
 @dataclass
 class Chat:
     id: str
-    title: str = "Новый чат"
+    title: str = "New chat"
     created: float = field(default_factory=now)
     updated: float = field(default_factory=now)
     model: str = "auto"
@@ -53,7 +53,7 @@ class Chat:
     def from_dict(cls, data: dict) -> "Chat":
         return cls(
             id=str(data["id"]),
-            title=str(data.get("title", "Новый чат")),
+            title=str(data.get("title", "New chat")),
             created=float(data.get("created", now())),
             updated=float(data.get("updated", now())),
             model=str(data.get("model", "auto")),
@@ -107,7 +107,7 @@ class ChatStore:
     def exists(self, chat_id: str) -> bool:
         return self.path(chat_id).is_file()
 
-    def new(self, title: str = "Новый чат", model: str = "auto", system: str = "") -> Chat:
+    def new(self, title: str = "New chat", model: str = "auto", system: str = "") -> Chat:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         chat_id = f"{stamp}-{uuid.uuid4().hex[:4]}"
         chat = Chat(id=chat_id, title=title, model=model, system=system)
@@ -128,7 +128,7 @@ class ChatStore:
                 items.append(
                     {
                         "id": data.get("id", file.stem),
-                        "title": data.get("title", "Без названия"),
+                        "title": data.get("title", "Untitled"),
                         "updated": float(data.get("updated", 0)),
                         "created": float(data.get("created", 0)),
                         "model": data.get("model", "auto"),
@@ -142,7 +142,7 @@ class ChatStore:
         return items
 
     def resolve(self, needle: str, items: list[dict] | None = None) -> str | None:
-        """Ищет чат по полному id, префиксу или номеру из списка."""
+        """Resolve chat by full id, prefix, or list index."""
         needle = needle.strip()
         if not needle:
             return None
@@ -163,19 +163,19 @@ class ChatStore:
         lines = [
             f"# {chat.title}",
             "",
-            f"- Чат: `{chat.id}`",
-            f"- Модель: {chat.model}",
-            f"- Создан: {human_time(chat.created)}",
-            f"- Обновлён: {human_time(chat.updated)}",
+            f"- Chat: `{chat.id}`",
+            f"- Model: {chat.model}",
+            f"- Created: {human_time(chat.created)}",
+            f"- Updated: {human_time(chat.updated)}",
             "",
         ]
         if chat.system:
-            lines += [f"> Системная роль: {chat.system}", ""]
+            lines += [f"> System: {chat.system}", ""]
         if chat.summary:
-            lines += ["## Память диалога", "", chat.summary, ""]
-        lines += ["## Диалог", ""]
+            lines += ["## Summary", "", chat.summary, ""]
+        lines += ["## Dialog", ""]
         for msg in chat.messages:
-            who = "Вы" if msg.role == "user" else "Gemini"
+            who = "user" if msg.role == "user" else "agent"
             stamp = human_time(msg.ts)
             lines += [f"### {who} · {stamp}", "", msg.content, ""]
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -184,7 +184,7 @@ class ChatStore:
 
 
 class Memory:
-    """Долговременные факты о пользователе."""
+    """Long-term facts about the user."""
 
     def __init__(self, path: Path):
         self.path = path
