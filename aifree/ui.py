@@ -1417,36 +1417,41 @@ class App:
 
     def banner(self) -> None:
         title = f" ExelCode {__version__} "
-        chat = (self.chat.title or "Новый чат")[:28]
-        model = resolve_model(self.chat.model)["name"]
+        chat = (self.chat.title or "Новый чат").strip()
+        model_name = resolve_model(self.chat.model)["name"]
+        model = f"auto→{model_name}"
+        ws = str(self.workspace or "-")
         width = max(20, min(self.width, 80))
         inner = max(10, width - 2)
 
-        def fit(text: str) -> str:
-            if len(text) <= inner:
+        def fit(text: str, limit: int | None = None) -> str:
+            limit = inner if limit is None else max(0, min(limit, inner))
+            if len(text) <= limit:
                 return text
-            if inner <= 1:
-                return text[:inner]
-            return text[: inner - 1] + "…"
+            if limit <= 1:
+                return text[:limit]
+            return text[: limit - 1] + "…"
+
+        def row_lr(left: str, right: str) -> str:
+            right = fit(right, inner)
+            space = inner - len(right)
+            if space <= 0:
+                return "│" + right[:inner].ljust(inner) + "│"
+            left = fit(left, space - 1 if space > 1 else 1)
+            gap = inner - len(left) - len(right)
+            if gap < 1:
+                left = fit(left, max(0, inner - len(right) - 1))
+                gap = inner - len(left) - len(right)
+            return "│" + left + (" " * max(1, gap)) + right + "│"
 
         def row(text: str) -> str:
             return "│" + fit(text).ljust(inner) + "│"
 
-        stream = "вкл" if self.stream else "выкл"
-        smart = "вкл" if self.smart_route else "выкл"
-        mode = AGENT_MODE_NAMES.get(self.agent_mode, self.agent_mode)
-        ws = str(self.workspace)
-        if len(ws) > 28:
-            ws = "…" + ws[-27:]
-        hint = "меню: /help"
-        if len(hint) >= inner:
-            hint_row = fit(hint)
-        else:
-            hint_row = " " * (inner - len(hint)) + hint
+        top = row_lr(f" чат: {chat}", f"модель: {model} ")
+        bottom = row_lr(f" папка: {ws}", "/help ")
         print()
         print(self.pal.cyan("╭" + fit("─" + title).ljust(inner, "─") + "╮"))
-        print(self.pal.cyan(row(f" чат: {chat} · модель: auto→{model} · стрим: {stream}")))
-        print(self.pal.cyan(row(f" умный: {smart} · агент: {mode} · папка: {ws or '-'}")))
-        print(self.pal.cyan(row(hint_row)))
+        print(self.pal.cyan(top))
+        print(self.pal.cyan(bottom))
         print(self.pal.cyan("╰" + "─" * inner + "╯"))
         print()
