@@ -147,6 +147,12 @@ class App:
     # ── запуск ─────────────────────────────────────────────────────────
     def run(self) -> int:
         self.banner()
+        if self.smart_route:
+            print(self.pal.green("  ✓ умный режим: вкл"))
+        if self.agent_chat:
+            print(self.pal.green("  ✓ чат→агент: вкл"))
+        if self.smart_route or self.agent_chat:
+            print()
         try:
             while True:
                 try:
