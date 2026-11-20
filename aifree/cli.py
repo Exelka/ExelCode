@@ -140,6 +140,12 @@ def main(argv: list[str] | None = None) -> int:
         agent_mode=cfg.get("agent_mode"),
     )
 
+    # Auto-update check on interactive startup (silent if up-to-date / on failure)
+    if not text and not args.json and sys.stdin.isatty() and sys.stdout.isatty():
+        from .update import startup_update_check
+
+        startup_update_check(interactive=True)
+
     if text:
         return app.one_shot(text, as_json=args.json)
     return app.run()
@@ -346,7 +352,7 @@ def _print_backups(cfg: dict, pal: Palette) -> int:
 
 
 def _cmd_update(pal: Palette, auto_yes: bool = False) -> int:
-    from .update import check_update, install_update
+    from .update import check_update, install_update, restart_program
 
     print("Checking for updates…")
     info = check_update(timeout=12.0)
@@ -384,7 +390,8 @@ def _cmd_update(pal: Palette, auto_yes: bool = False) -> int:
     ok, msg = install_update(timeout=180.0)
     if ok:
         print(pal.green(f"  ✓ {msg}"))
-        print(pal.dim("  restart ExelCode to use the new version"))
+        print(pal.dim("  restarting ExelCode..."))
+        restart_program()
         return 0
     print(pal.red(f"  ✗ {msg}"))
     return 1

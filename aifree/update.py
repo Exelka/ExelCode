@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from . import __version__
 
@@ -184,4 +185,67 @@ def install_update(timeout: float = 120.0) -> tuple[bool, str]:
 
     out = (proc.stdout or "").strip() or "updated"
     return True, out.splitlines()[-1][:300]
+
+
+def restart_program(argv: list[str] | None = None) -> None:
+    """Restart current process with the same Python interpreter and argv."""
+    args = [sys.executable] + (sys.argv if argv is None else list(argv))
+    try:
+        # Flush stdio before replacing process
+        try:
+            sys.stdout.flush()
+            sys.stderr.flush()
+        except Exception:
+            pass
+        os.execv(sys.executable, args)
+    except Exception:
+        # Fallback (e.g. some environments where execv behaves oddly)
+        os.execvp(sys.executable, args)
+
+
+def startup_update_check(
+    *,
+    interactive: bool,
+    prompt_yes_no: Callable[[str], bool] | None = None,
+    print_fn: Callable[[str], None] | None = None,
+) -> bool:
+    """Auto-check for updates on startup.
+
+    Returns True if an update was installed and process restart was initiated.
+    Silent when up to date or on check failure.
+    """
+    if not interactive:
+        return False
+    try:
+        info = check_update(timeout=6.0)
+    except Exception:
+        return False
+    if info.error or not info.available:
+        return False
+
+    say = print_fn or print
+    ask = prompt_yes_no
+    if ask is None:
+        if not sys.stdin.isatty():
+            return False
+
+        def ask(q: str) -> bool:
+            try:
+                ans = input(q).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return False
+            return ans in ("y", "yes")
+
+    say(f"Update available: {info.latest} (current {info.current})")
+    if not ask("Install update and restart now? [y/N]: "):
+        return False
+
+    ok, msg = install_update(timeout=180.0)
+    if not ok:
+        say(f"Update failed: {msg}")
+        return False
+    say(f"Updated: {msg}")
+    say("Restarting ExelCode...")
+    restart_program()
+    return True  # not reached on successful exec, but for clarity
 

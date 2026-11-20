@@ -131,6 +131,11 @@ class App:
         self._width = None
         self.out = sys.stdout
         self.tty = sys.stdout.isatty()
+        self.last_prompt = ""
+        self.last_answer = ""
+        self.recent_agent_files: list[str] = []
+        self.client: Gemini | None = None
+        self._readline = self._setup_readline()
 
     @property
     def width(self) -> int:
@@ -138,11 +143,6 @@ class App:
             return terminal_width()
         except Exception:
             return 88
-        self.last_prompt = ""
-        self.last_answer = ""
-        self.recent_agent_files: list[str] = []
-        self.client: Gemini | None = None
-        self._readline = self._setup_readline()
 
     # ── запуск ─────────────────────────────────────────────────────────
     def run(self) -> int:
@@ -1356,7 +1356,7 @@ class App:
         return False
 
     def _update(self) -> None:
-        from .update import check_update, install_update
+        from .update import check_update, install_update, restart_program
 
         print(self.pal.dim("sys   checking for updates…"))
         info = check_update(timeout=12.0)
@@ -1381,7 +1381,8 @@ class App:
         ok, msg = install_update(timeout=180.0)
         if ok:
             print(self.pal.green(f"sys   ✓ {msg}"))
-            print(self.pal.dim("sys   restart ExelCode to use the new version"))
+            print(self.pal.dim("sys   restarting ExelCode..."))
+            restart_program()
         else:
             print(self.pal.red(f"sys   ✗ {msg}"))
 
