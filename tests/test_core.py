@@ -155,5 +155,19 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(result == "python3 -m pytest -q", not IS_WINDOWS)
 
 
+class ReadlinePromptTests(unittest.TestCase):
+    def test_rl_wrap_prompt_wraps_ansi(self):
+        from aifree.ui import _rl_wrap_prompt
+
+        plain = "user  › "
+        self.assertEqual(_rl_wrap_prompt(plain), plain)
+
+        colored = "\x1b[36muser  › \x1b[0m"
+        wrapped = _rl_wrap_prompt(colored)
+        self.assertEqual(wrapped, "\x01\x1b[36m\x02user  › \x01\x1b[0m\x02")
+        # visible text remains the same after stripping readline markers
+        self.assertEqual(wrapped.replace("\x01", "").replace("\x02", ""), colored)
+
+
 if __name__ == "__main__":
     unittest.main()

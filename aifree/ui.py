@@ -75,6 +75,15 @@ COMMANDS = [name.split()[0] for name, _ in HELP] + [
     "/cls", "/about", "/version", "/ws", "/amode", "/mode", "/do", "/achat",
 ]
 
+_ANSI_RE = re.compile(r"(\x1b\[[0-?]*[ -/]*[@-~])")
+
+
+def _rl_wrap_prompt(text: str) -> str:
+    """Wrap ANSI escapes as readline non-printing markers to keep width correct."""
+    if "\x1b" not in text:
+        return text
+    return _ANSI_RE.sub("\x01\\1\x02", text)
+
 
 AGENT_MODE_NAMES = {
     "ask": "ask",
@@ -124,6 +133,7 @@ class App:
         self.tty = sys.stdout.isatty()
         self.last_prompt = ""
         self.last_answer = ""
+        self.recent_agent_files: list[str] = []
         self.client: Gemini | None = None
         self._readline = self._setup_readline()
 
@@ -201,15 +211,19 @@ class App:
         return 0
 
     # ── ввод ───────────────────────────────────────────────────────────
+    def _input(self, prompt: str) -> str:
+        if self._readline:
+            prompt = _rl_wrap_prompt(prompt)
+        return input(prompt)
+
     def _read_input(self) -> str | None:
         label = "agent › " if self.agent_chat else "user  › "
-        prompt = self.pal.cyan(label)
-        line = input(prompt)
+        line = self._input(self.pal.cyan(label))
         if not line.endswith("\\"):
             return line
         chunks = [line[:-1]]
         while True:
-            more = input(self.pal.dim("... "))
+            more = self._input(self.pal.dim("... "))
             if more.endswith("\\"):
                 chunks.append(more[:-1])
             else:
@@ -692,7 +706,7 @@ class App:
                 print(f"  {mark} {index}. {self.pal.cyan(model['name'])} — {model['desc']}")
             print()
             try:
-                arg = input(self.pal.dim("  номер или id (Enter — отмена): ")).strip()
+                arg = self._input(self.pal.dim("  номер или id (Enter — отмена): ")).strip()
             except (EOFError, KeyboardInterrupt):
                 return
             if not arg:
@@ -742,7 +756,7 @@ class App:
     def _remember(self, arg: str) -> None:
         if not arg:
             try:
-                arg = input(self.pal.dim("  что запомнить? ")).strip()
+                arg = self._input(self.pal.dim("  что запомнить? ")).strip()
             except (EOFError, KeyboardInterrupt):
                 return
         if not arg:
@@ -948,7 +962,7 @@ class App:
             print(f"  {self.pal.cyan(key)}. {title}")
         print()
         try:
-            choice = input(self.pal.dim("  выбор: ")).strip().lower()
+            choice = self._input(self.pal.dim("  выбор: ")).strip().lower()
         except (EOFError, KeyboardInterrupt):
             return
         if choice in ("", "0", "q", "назад"):
@@ -985,12 +999,17 @@ class App:
 
     def _ask_text(self, prompt: str) -> str:
         try:
-            text = input(self.pal.dim(prompt)).strip()
+            text = self._input(self.pal.dim(prompt)).strip()
         except (EOFError, KeyboardInterrupt):
             return ""
         return text
 
-    def _make_agent(self, mode: str | None = None) -> Agent:
+    def _make_agent(
+        self,
+        mode: str | None = None,
+        history: list | None = None,
+        recent_files: list[str] | None = None,
+    ) -> Agent:
         mode = normalize_agent_mode(mode or self.agent_mode)
         return Agent(
             workspace=self.workspace,
@@ -1008,44 +1027,95 @@ class App:
             max_diff_lines=int(self.cfg["agent_max_diff_lines"]),
             run_timeout=float(self.cfg.get("agent_run_timeout", 60)),
             run_output_chars=int(self.cfg.get("agent_run_output_chars", 8000)),
+            history=history,
+            recent_files=recent_files,
         )
 
     def _run_agent_task(self, task: str, mode: str | None = None) -> None:
         mode = normalize_agent_mode(mode or self.agent_mode)
         label = AGENT_MODE_NAMES.get(mode, mode)
-        print(self.pal.dim(f"  режим: {label} · папка: {self.workspace}"))
+        print(self.pal.dim(f"sys  · agent   mode: {label} · ws: {self.workspace}"))
+        history = self.chat.messages[-5:]
+        recent_files = list(self.recent_agent_files)
         try:
-            agent = self._make_agent(mode)
+            agent = self._make_agent(mode, history=history, recent_files=recent_files)
             result = agent.run(task)
         except KeyboardInterrupt:
-            print(self.pal.yellow("  ⏹ остановлено"))
+            print(self.pal.yellow("sys  · stopped"))
             return
         except (AgentError, GeminiError) as exc:
-            print(self.pal.red(f"  ⚠ {exc}"))
+            print(self.pal.red(f"sys  · error: {exc}"))
             return
+
+        self._record_agent_result(task, result)
+
         if result.error:
-            print(self.pal.red(f"  ⚠ {result.error}"))
+            print(self.pal.red(f"sys  · error: {result.error}"))
         elif result.dry_run:
-            print(self.pal.yellow("  dry-run: файлы не изменены"))
+            print(self.pal.yellow("sys  · dry-run: files not changed"))
             if result.changed:
-                print(self.pal.dim(f"  план: {', '.join(result.changed)}"))
+                print(self.pal.dim(f"      plan: {', '.join(result.changed)}"))
         elif result.applied or result.ran:
             if result.applied:
-                print(self.pal.green(f"  ✓ изменено файлов: {len(result.changed)}"))
+                print(self.pal.green(f"sys  · changed files: {len(result.changed)}"))
             if result.ran:
                 ok = sum(1 for r in result.ran if r.get("code") == 0)
-                print(self.pal.dim(f"  проверок: {len(result.ran)}, успешно: {ok}"))
+                print(self.pal.dim(f"      checks: {len(result.ran)}, ok: {ok}"))
             if result.backup:
-                print(self.pal.dim(f"  откат: /undo · бэкап: {result.backup}"))
+                print(self.pal.dim(f"      undo: /undo · backup: {result.backup}"))
         else:
-            print(self.pal.dim("  изменений нет"))
+            print(self.pal.dim("sys  · no changes"))
+
+    def _record_agent_result(self, task: str, result) -> None:
+        # track recent files for follow-ups (session/chat context)
+        touched = list(getattr(result, "touched_files", []) or [])
+        if not touched and getattr(result, "changed", None):
+            touched = list(result.changed)
+        if touched:
+            merged = list(self.recent_agent_files)
+            seen = set(merged)
+            for f in touched:
+                if f and f not in seen:
+                    merged.append(f)
+                    seen.add(f)
+            self.recent_agent_files = merged[-20:]
+
+        # save brief summary to shared chat history so chat/smart routing sees it
+        if getattr(result, "error", "") and not getattr(result, "applied", False) and not getattr(result, "ran", None):
+            # failed with nothing done - no useful context to record
+            return
+
+        parts = [f'[agent task] {task.strip()[:200]}']
+        changed = list(getattr(result, "changed", []) or [])
+        if changed:
+            parts.append("changed: " + ", ".join(changed[:10]))
+        ran = list(getattr(result, "ran", []) or [])
+        if ran:
+            ok = sum(1 for r in ran if r.get("code") == 0)
+            parts.append(f"checks: {len(ran)} (ok {ok})")
+        if getattr(result, "dry_run", False):
+            parts.append("mode: dry-run")
+        if getattr(result, "done", False):
+            parts.append("done")
+        reply = (getattr(result, "reply", "") or "").strip()
+        if reply and not changed and not ran:
+            short = " ".join(reply.split())
+            if len(short) > 300:
+                short = short[:297] + "..."
+            parts.append("reply: " + short)
+        summary = " | ".join(parts)
+        if not summary.strip():
+            return
+        self.chat.add("assistant", summary, model="agent")
+        self.last_answer = summary
+        self._save()
 
     def _workspace(self, arg: str) -> None:
         arg = (arg or "").strip()
         if not arg:
             print(self.pal.dim(f"  текущая папка: {self.workspace}"))
             try:
-                arg = input(
+                arg = self._input(
                     self.pal.dim("  новая папка (Enter — оставить, . — текущая): ")
                 ).strip()
             except (EOFError, KeyboardInterrupt):
@@ -1145,7 +1215,7 @@ class App:
                 print(f"  {mark} {index}. {self.pal.cyan(key.ljust(8))} — {desc}")
             print()
             try:
-                arg = input(self.pal.dim("  номер или режим (Enter — отмена): ")).strip().lower()
+                arg = self._input(self.pal.dim("  номер или режим (Enter — отмена): ")).strip().lower()
             except (EOFError, KeyboardInterrupt):
                 return
             if not arg:
@@ -1318,7 +1388,7 @@ class App:
     # ── служебное ──────────────────────────────────────────────────────
     def _confirm(self, question: str) -> bool:
         try:
-            answer = input(question + " (y/N): ").strip().lower()
+            answer = self._input(question + " (y/N): ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             return False
         return answer in ("y", "yes", "д", "да")

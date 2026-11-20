@@ -68,7 +68,7 @@ bin\aifree.cmd
 - в примерах ниже `python3` заменяйте на `python` — агент подменяет
   `python3` на текущий интерпретатор сам, когда запускает проверки;
 - данные лежат в `%LOCALAPPDATA%\ExelCode`, конфиг — в
-  `%APPDATA%\ExelCode\config.json` (поддерживаются и старые `AIFREE_*`/пути `ai-free` как fallback через env);
+  `%APPDATA%\ExelCode\config.json` (поддерживаются старые переменные `AIFREE_HOME` / `AIFREE_CONFIG` для обратной совместимости);
 - вывод переключается в UTF-8, ANSI-цвета включаются автоматически
   в Windows 10+ (в старом `cmd.exe` без VT цвета отключаются флагом
   `--no-color`);
@@ -230,7 +230,7 @@ python3 main.py --workspace ~/project --undo
 - откат: `/undo` или `--undo`, список — `/backups`/`--backups`;
 - при не-интерактивном запуске без `--yes` агент работает в режиме плана.
 
-Конфиг (`~/.config/ai-free/config.json`):
+Конфиг (`~/.config/exelcode/config.json`, на Windows — `%APPDATA%\ExelCode\config.json`):
 
 ```json
 {

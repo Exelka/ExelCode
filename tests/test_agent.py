@@ -41,6 +41,20 @@ class WorkspaceTests(unittest.TestCase):
                 with self.assertRaises(AgentError):
                     ws.resolve(bad)
 
+    def test_invalid_path_characters_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Workspace(tmp)
+            for bad in (
+                'patch="file.txt',
+                "name='file.txt'",
+                "a=b.txt",
+                "a<b>.txt",
+                "bad\nname.txt",
+                "bad\rname.txt",
+            ):
+                with self.assertRaises(AgentError, msg=bad):
+                    ws.resolve(bad)
+
     def test_tree_ignores_service_dirs(self):
         with tempfile.TemporaryDirectory() as tmp:
             ws = Workspace(tmp)
@@ -141,6 +155,27 @@ DONE
         self.assertEqual(normalize_agent_mode("plan"), "dry-run")
         self.assertEqual(normalize_agent_mode("auto"), "auto")
         self.assertEqual(normalize_agent_mode("ask"), "ask")
+
+    def test_broken_block_headers_and_patch_markers(self):
+        # model used patch="..." instead of path="..."
+        plan = parse_agent_response(
+            '```file patch="zombie_apocalypse_book.txt"\nhello\n```'
+        )
+        self.assertEqual(len(plan.ops), 1)
+        self.assertEqual(plan.ops[0].kind, "write")
+        self.assertEqual(plan.ops[0].path, "zombie_apocalypse_book.txt")
+        self.assertEqual(plan.ops[0].content, "hello\n")
+
+        # file="..." variant and missing closing quote
+        plan = parse_agent_response('```file file="book.txt\nhello\n```')
+        self.assertEqual(plan.ops[0].path, "book.txt")
+
+        # SEARCH/REPLACE markers inside file/write block -> treat as patch, not raw file
+        body = "<<<<<<< SEARCH\nold\n=======\nnew\n>>>>>>> REPLACE\n"
+        plan = parse_agent_response(f'```file path="a.py"\n{body}```')
+        self.assertEqual(plan.ops[0].kind, "patch")
+        self.assertEqual(plan.ops[0].path, "a.py")
+        self.assertEqual(plan.ops[0].hunks, [("old\n", "new\n")])
 
 
 class HunkTests(unittest.TestCase):
@@ -262,6 +297,31 @@ class AgentTests(unittest.TestCase):
             result = agent.run("посмотри середину")
             self.assertIn("a.py:2-3", client.prompts[1])
             self.assertIn("l2\nl3", client.prompts[1])
+
+    def test_history_and_recent_files_in_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "book.txt").write_text("intro\n", encoding="utf-8")
+            history = [
+                {"role": "user", "content": "создай книгу"},
+                {"role": "assistant", "content": "создал book.txt"},
+            ]
+            client = FakeClient(["READY", "DONE"])
+            agent = Agent(
+                workspace=root,
+                client=client,
+                auto_approve=True,
+                quiet=True,
+                backup_root=root / "backups",
+                history=history,
+                recent_files=["book.txt"],
+            )
+            agent.run("продолжай книгу")
+            # research and edit prompts should include history and recent files
+            self.assertIn("продолжай книгу", client.prompts[0])
+            self.assertIn("book.txt", client.prompts[0])
+            self.assertIn("создай книгу", client.prompts[0])
+            self.assertIn("book.txt", client.prompts[1])
 
     def test_run_and_fix_flow(self):
         with tempfile.TemporaryDirectory() as tmp:

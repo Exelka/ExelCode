@@ -160,6 +160,7 @@ class AgentResult:
     reply: str = ""
     error: str = ""
     done: bool = False
+    touched_files: list[str] = field(default_factory=list)
 
 
 def _human_size(size: int) -> str:
@@ -374,6 +375,30 @@ _SMALL_TALK_RE = re.compile(
     re.I,
 )
 
+_FOLLOWUP_RE = re.compile(
+    r"\b(продолж\w*|дальше|давай дальше|продолжим|додел\w*|допиши\w*|дополн\w*|"
+    r"ещё|еще|"
+    r"continue|go on|keep going|carry on|next|resume)\b",
+    re.I,
+)
+
+
+def _is_followup_with_context(
+    task: str, history: list | None, recent_files: list[str] | None
+) -> bool:
+    """Follow-up like 'continue' should use agent context when available."""
+    if not (history or recent_files):
+        return False
+    t = (task or "").strip()
+    if not t:
+        return False
+    if _FOLLOWUP_RE.search(t):
+        return True
+    # short ambiguous request with known recent files -> prefer full flow with context
+    if recent_files and len(t.split()) <= 10 and not _SMALL_TALK_RE.match(t):
+        return True
+    return False
+
 
 def should_answer_without_scan(text: str) -> bool:
     """Можно ли ответить без сканирования файлов проекта."""
@@ -419,30 +444,34 @@ class Workspace:
     def resolve(self, rel: str, must_exist: bool = False) -> Path:
         raw = str(rel).strip().strip("\"'`")
         if not raw:
-            raise AgentError("пустой путь")
+            raise AgentError("empty path")
         if "\x00" in raw:
-            raise AgentError("некорректный путь")
+            raise AgentError("invalid path")
+        if any(ch in raw for ch in "\"'=<>") or any(
+            ord(ch) < 32 or ord(ch) == 127 for ch in raw
+        ):
+            raise AgentError(f"invalid characters in path: {raw!r}")
         path = Path(raw)
         if not path.parts:
-            raise AgentError("пустой путь")
+            raise AgentError("empty path")
         if path.is_absolute():
-            raise AgentError(f"абсолютный путь запрещён: {raw}")
+            raise AgentError(f"absolute path is not allowed: {raw}")
         if any(part in ("..", "~") for part in path.parts):
-            raise AgentError(f"выход за пределы проекта запрещён: {raw}")
+            raise AgentError(f"path traversal is not allowed: {raw}")
         if any(part in IGNORED_DIRS for part in path.parts):
-            raise AgentError(f"служебная папка запрещена: {raw}")
+            raise AgentError(f"service directory is not allowed: {raw}")
         if _is_secret(path.name):
-            raise AgentError(f"секретный файл запрещён: {raw}")
+            raise AgentError(f"secret file is not allowed: {raw}")
         target = (self.root / path).resolve()
         try:
             target.relative_to(self.root)
         except ValueError as exc:
-            raise AgentError(f"путь вне проекта: {raw}") from exc
+            raise AgentError(f"path outside workspace: {raw}") from exc
         raw_path = self.root / path
         if raw_path.is_symlink():
-            raise AgentError(f"символические ссылки запрещены: {raw}")
+            raise AgentError(f"symbolic links are not allowed: {raw}")
         if must_exist and not target.is_file():
-            raise AgentError(f"файл не найден: {raw}")
+            raise AgentError(f"file not found: {raw}")
         return target
 
     def read_text(
@@ -525,15 +554,50 @@ _HINT_PATH_RE = re.compile(r"^([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)$")
 
 
 def _clean_path(value: str) -> str:
-    value = value.strip().strip("\"'`").strip()
-    quoted = re.match(r'^(["\'])(.*?)\1', value)
-    if quoted:
-        value = quoted.group(2)
-    elif value:
-        value = value.split()[0]
+    value = (value or "").strip().strip("`").strip()
+    # tolerate malformed quoted values, including missing closing quote
+    m = re.match(r'^["\'](.*)$', value)
+    if m:
+        value = m.group(1)
+        if value and value[-1] in "\"'":
+            value = value[:-1]
+    else:
+        # unquoted: take first token
+        if value:
+            value = value.split()[0]
+    value = value.strip().strip("\"'`")
     if value.startswith("./"):
         value = value[2:]
     return value.strip()
+
+
+def _extract_path_value(rest: str) -> str | None:
+    rest = (rest or "").strip()
+    if not rest:
+        return None
+    # accept common mistaken keys: path/file/name/patch="..."
+    m = re.match(r'(?i)^(?:path|file|name|patch)\s*[:=]\s*(.+)$', rest)
+    if m:
+        rest = m.group(1).strip()
+    if not rest:
+        return None
+    m = re.match(r'^"([^"\n]*?)"?\s*$', rest)
+    if m:
+        return m.group(1).strip()
+    m = re.match(r"^'([^'\n]*?)'?\s*$", rest)
+    if m:
+        return m.group(1).strip()
+    token = rest.split()[0] if rest else ""
+    token = token.strip().strip("\"'`")
+    return token.strip() or None
+
+
+def _looks_like_patch_body(body: str) -> bool:
+    return bool(
+        re.search(r"^<<<<<<< ", body, re.M)
+        and re.search(r"^=======", body, re.M)
+        and re.search(r"^>>>>>>> ", body, re.M)
+    )
 
 
 def _parse_info(info: str) -> tuple[str, str] | None:
@@ -548,17 +612,11 @@ def _parse_info(info: str) -> tuple[str, str] | None:
         return None
     kind = match.group(1).lower()
     rest = match.group(2).strip()
-    rest = re.sub(r"(?i)^path\s*[:=]\s*", "", rest)
     if kind in ("run", "exec", "command", "cmd", "bash", "sh", "shell"):
-        # для run путь не нужен; в rest может быть команда, но берём тело блока
-        quoted = re.match(r'^(["\'])(.*?)\1', rest)
-        path = quoted.group(2) if quoted else rest
-        return "run", path.strip().strip("\"'`")
-    if not rest or rest.lower() in ("path", "путь"):
-        return None
-    quoted = re.match(r'^(["\'])(.*?)\1', rest)
-    path = quoted.group(2) if quoted else rest.split()[0]
-    path = path.strip().strip("\"'`")
+        # for run, path/command in header is optional; body usually contains command
+        path = _extract_path_value(rest) or ""
+        return "run", path
+    path = _extract_path_value(rest)
     if not path:
         return None
     if kind in ("read",):
@@ -706,7 +764,11 @@ def parse_agent_response(text: str) -> AgentPlan:
             if cmd:
                 runs.append(cmd)
         elif kind in ("file", "write"):
-            ops.append(FileOp("write", path, content=body))
+            if _looks_like_patch_body(body):
+                # model sometimes puts SEARCH/REPLACE inside a file/write block
+                ops.append(FileOp("patch", path, hunks=parse_patch(body)))
+            else:
+                ops.append(FileOp("write", path, content=body))
         elif kind in ("patch", "replace"):
             ops.append(FileOp("patch", path, hunks=parse_patch(body)))
         elif kind in ("delete", "remove"):
@@ -1057,18 +1119,68 @@ def _format_files(files: dict[str, str], limit: int) -> str:
     return "\n".join(parts)
 
 
+def _format_history(messages: list | None, limit: int = 5) -> str:
+    if not messages:
+        return "(no recent chat history)"
+    items = list(messages)[-max(1, limit):]
+    parts: list[str] = []
+    for msg in items:
+        if isinstance(msg, dict):
+            role = str(msg.get("role", "user"))
+            content = str(msg.get("content", ""))
+        else:
+            role = str(getattr(msg, "role", "user"))
+            content = str(getattr(msg, "content", ""))
+        who = "user" if role == "user" else "assistant"
+        text = content.strip()
+        if len(text) > 1200:
+            text = text[:1200] + "\n…"
+        if not text:
+            continue
+        parts.append(f"{who}: {text}")
+    return "\n\n".join(parts) if parts else "(no recent chat history)"
+
+
+def _format_recent_files(files: list[str] | None) -> str:
+    if not files:
+        return "(none)"
+    # keep unique, preserve recent-first/last order reasonably
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for f in files:
+        if not f or f in seen:
+            continue
+        seen.add(f)
+        ordered.append(f)
+    return "\n".join(f"- {f}" for f in ordered[-20:]) or "(none)"
+
+
 def build_research_prompt(
     task: str,
     tree: str,
     files: dict[str, str],
     context_chars: int = 30000,
+    history: list | None = None,
+    recent_files: list[str] | None = None,
 ) -> str:
     budget = max(4000, context_chars - len(tree) - 3000)
+    hist = _format_history(history, limit=5)
+    recent = _format_recent_files(recent_files)
     return f"""You are ExelCode, an autonomous coding agent.
 You work in a local project directory. User task:
 <task>
 {task}
 </task>
+
+Recent chat history (for follow-up context):
+<history>
+{hist}
+</history>
+
+Recently read/changed files in this session:
+<recent_files>
+{recent}
+</recent_files>
 
 File tree (relative paths):
 <tree>
@@ -1087,6 +1199,7 @@ For a large file you can request a range:
 READ: relative/path.py:1-120
 If context is sufficient, output exactly one line:
 READY
+Use the recent chat history and recent files to understand follow-ups like "continue".
 Do not output anything else and do not propose changes in this phase.
 """
 
@@ -1098,22 +1211,36 @@ def build_edit_prompt(
     applied: list[str],
     feedback: str = "",
     context_chars: int = 30000,
+    history: list | None = None,
+    recent_files: list[str] | None = None,
 ) -> str:
     budget = max(4000, context_chars - len(tree) - 5000)
     applied_text = "\n".join(f"- {path}" for path in applied) or "(none yet)"
     feedback_text = f"\n<feedback>\n{feedback}\n</feedback>\n" if feedback else ""
+    hist = _format_history(history, limit=5)
+    recent = _format_recent_files(recent_files)
     return f"""You are ExelCode, an autonomous coding agent.
 You work in a local project directory. User task:
 <task>
 {task}
 </task>
 
+Recent chat history (for follow-up context):
+<history>
+{hist}
+</history>
+
+Recently read/changed files in this session:
+<recent_files>
+{recent}
+</recent_files>
+
 File tree (relative paths):
 <tree>
 {tree}
 </tree>
 
-Прочитанные файлы:
+Read files:
 <files>
 {_format_files(files, budget)}
 </files>
@@ -1159,6 +1286,7 @@ Rules:
 - if checks are needed after applying, output a run block; after execution you will get output and exit code;
 - if a command fails, fix the cause and verify again;
 - if there is nothing left to do, output DONE;
+- use recent chat history and recent files to resolve follow-ups like "continue the book".
 - do not wrap the entire response in an extra code block.
 """
 
@@ -1195,6 +1323,8 @@ class Agent:
         run_output_chars: int = MAX_RUN_OUTPUT,
         runner=None,
         quiet: bool = False,
+        history: list | None = None,
+        recent_files: list[str] | None = None,
     ):
         self.ws = (
             workspace
@@ -1219,6 +1349,8 @@ class Agent:
         self.run_output_chars = run_output_chars
         self.runner = runner or execute_command
         self.quiet = quiet
+        self.history = list(history or [])
+        self.recent_files = list(recent_files or [])
         self.client = client or Gemini(model, timeout=timeout)
 
     # ── ввод-вывод ──────────────────────────────────────────────────────
@@ -1382,15 +1514,36 @@ class Agent:
         if not task:
             raise AgentError("пустая задача")
 
+        def _touched(files_dict, applied_list, extra=None):
+            out, seen = [], set()
+            for key in list(files_dict.keys()) + list(applied_list) + list(extra or []):
+                base, _, _ = parse_read_spec(str(key))
+                if base and base not in seen:
+                    seen.add(base)
+                    out.append(base)
+            return out
+
         # Обычный вопрос/разговор без привязки к файлам проекта — без сканирования
-        if should_answer_without_scan(task):
+        has_agent_ctx = bool(self.history or self.recent_files)
+        if should_answer_without_scan(task) and not _is_followup_with_context(
+            task, self.history, self.recent_files
+        ):
             self._print(self.pal.dim("  agent · replying…"))
             self.out.flush()
+            ctx = ""
+            if has_agent_ctx:
+                ctx = (
+                    "\n\nRecent chat history:\n"
+                    f"{_format_history(self.history, limit=5)}\n\n"
+                    "Recently read/changed files:\n"
+                    f"{_format_recent_files(self.recent_files)}\n"
+                )
             prompt = (
                 "Ты полезный ассистент. Ответь на русском, кратко и по делу. "
                 "If asked about your capabilities, say you are ExelCode: you can "
                 "chat, and in agent mode create/edit files and run "
-                "команды в выбранной папке проекта.\n\n"
+                "команды в выбранной папке проекта."
+                f"{ctx}\n"
                 f"Вопрос: {task}"
             )
             try:
@@ -1404,7 +1557,7 @@ class Agent:
             self._print()
             if not self.quiet:
                 print(text.strip(), file=self.out)
-            return AgentResult(reply=text.strip(), rounds=1, done=True)
+            return AgentResult(reply=text.strip(), rounds=1, done=True, touched_files=[])
 
         self._print(self.pal.dim(f"  📁 {self.ws.root}"))
         if self.ws.root == Path.home():
@@ -1419,10 +1572,15 @@ class Agent:
         for _ in range(self.max_rounds):
             rounds += 1
             prompt = build_research_prompt(
-                task, self.ws.tree(), files, self.context_chars
+                task, self.ws.tree(), files, self.context_chars,
+                history=self.history, recent_files=self.recent_files,
             )
             text = self._ask(prompt, "scan: reading project")
-            plan = parse_agent_response(text)
+            try:
+                plan = parse_agent_response(text)
+            except AgentError as exc:
+                self._print(self.pal.red(f"  ⚠ parse error: {exc}"))
+                break
             if not plan.reads:
                 break
             new_reads = 0
@@ -1452,10 +1610,25 @@ class Agent:
                 applied,
                 feedback,
                 self.context_chars,
+                history=self.history,
+                recent_files=self.recent_files,
             )
             text = self._ask(prompt, "plan: preparing changes/checks")
             last_reply = text
-            plan = parse_agent_response(text)
+            try:
+                plan = parse_agent_response(text)
+            except AgentError as exc:
+                feedback = f"Parse error in previous response: {exc}. Fix block headers/body and try again."
+                self._print(self.pal.red(f"  ⚠ {exc}"))
+                no_progress += 1
+                if no_progress >= 3:
+                    return AgentResult(
+                        applied=bool(applied), dry_run=self.dry_run, changed=applied,
+                        ran=ran, backup=backup, rounds=rounds,
+                        reply=last_reply, error=str(exc),
+                        touched_files=_touched(files, applied),
+                    )
+                continue
             feedback_parts: list[str] = []
             progressed = False
 
@@ -1481,6 +1654,7 @@ class Agent:
                             applied=bool(applied), dry_run=False, changed=applied,
                             ran=ran, backup=backup, rounds=rounds,
                             reply=last_reply, error=str(exc),
+                            touched_files=_touched(files, applied),
                         )
                     continue
 
@@ -1492,20 +1666,23 @@ class Agent:
                             self._print(self.pal.dim("  sys  · requested commands (not run in dry-run):"))
                             for cmd in plan.runs:
                                 self._print(self.pal.dim(f"    $ {cmd}"))
+                        changed_now = [item.path for item in prepared]
                         return AgentResult(
                             applied=False,
                             dry_run=True,
-                            changed=[item.path for item in prepared],
+                            changed=changed_now,
                             ran=[],
                             rounds=rounds,
                             reply=last_reply,
                             done=plan.done,
+                            touched_files=_touched(files, applied, changed_now),
                         )
                     if not self._approve():
                         self._print(self.pal.dim("  sys  · cancelled by user"))
                         return AgentResult(
                             applied=bool(applied), dry_run=False, changed=applied,
                             ran=ran, backup=backup, rounds=rounds, reply=last_reply,
+                            touched_files=_touched(files, applied),
                         )
                     try:
                         backup = apply_prepared(self.ws, prepared, self.backup_root, task)
@@ -1513,6 +1690,7 @@ class Agent:
                         return AgentResult(
                             error=str(exc), changed=applied, ran=ran, backup=backup,
                             rounds=rounds, reply=last_reply,
+                            touched_files=_touched(files, applied),
                         )
                     applied.extend(item.path for item in prepared)
                     for item in prepared:
@@ -1591,6 +1769,7 @@ class Agent:
             rounds=rounds,
             reply=last_reply,
             done=True if applied or not ran else False,
+            touched_files=_touched(files, applied),
         )
 
 
