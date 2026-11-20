@@ -76,6 +76,10 @@ _CODE_RE = re.compile(
     r"&code_event_index=\d+\n.*?```\n?",
     re.S,
 )
+# Internal Google UI tags that may leak into text responses.
+_UI_TAG_RE = re.compile(r"<FollowUp\b[^>]*>.*?</FollowUp\s*>", re.S | re.I)
+_UI_TAG_SELF_RE = re.compile(r"<FollowUp\b[^>]*/\s*>", re.I)
+_EXTRA_BLANKS_RE = re.compile(r"\n{3,}")
 _FAILURE_PHRASES = (
     "i encountered an error doing what you asked",
     "something went wrong. please try again",
@@ -117,7 +121,11 @@ def resolve_model(name: str | None) -> dict:
 
 def clean_text(text: str) -> str:
     text = re.sub(r"<ElicitationsGroup.*", "", text, flags=re.S)
+    text = _UI_TAG_RE.sub("", text)
+    text = _UI_TAG_SELF_RE.sub("", text)
     text = _CODE_RE.sub("", text)
+    # clean excessive blank lines left after tag/block removal
+    text = _EXTRA_BLANKS_RE.sub("\n\n", text)
     return text.strip()
 
 

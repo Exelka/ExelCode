@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from aifree.console import IS_WINDOWS, adapt_command, decode_output, normalize_newlines
-from aifree.gemini import GeminiError, is_failure_reply, resolve_model
+from aifree.gemini import GeminiError, clean_text, is_failure_reply, resolve_model
 from aifree.highlight import highlight_line, new_state
 from aifree.prompt import build_prompt, make_summary_prompt, summary_candidates
 from aifree.render import MarkdownRenderer, StreamRenderer, strip_inline
@@ -86,6 +86,19 @@ class GeminiTests(unittest.TestCase):
             is_failure_reply("I encountered an error doing what you asked. Try again?")
         )
         self.assertFalse(is_failure_reply("Something went wrong in your code because x"))
+
+    def test_clean_text_strips_followup_tags(self):
+        text = 'Hello\n\n<FollowUp label="Want more?" query="details"/>\n'
+        cleaned = clean_text(text)
+        self.assertEqual(cleaned, "Hello")
+        self.assertNotIn("FollowUp", cleaned)
+
+        paired = 'Hi\n<FollowUp label="x">inner</FollowUp>\nBye'
+        cleaned = clean_text(paired)
+        self.assertIn("Hi", cleaned)
+        self.assertIn("Bye", cleaned)
+        self.assertNotIn("FollowUp", cleaned)
+        self.assertNotIn("\n\n\n", cleaned)
 
 
 class RenderTests(unittest.TestCase):

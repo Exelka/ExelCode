@@ -323,6 +323,50 @@ class AgentTests(unittest.TestCase):
             self.assertIn("создай книгу", client.prompts[0])
             self.assertIn("book.txt", client.prompts[1])
 
+    def test_stops_after_successful_apply_without_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeClient([
+                "READY",
+                '```file path="a.txt"\nhello\n```',
+            ])
+            agent = Agent(
+                workspace=root,
+                client=client,
+                auto_approve=True,
+                quiet=True,
+                backup_root=root / "backups",
+            )
+            result = agent.run("create a.txt")
+            self.assertTrue(result.applied)
+            self.assertEqual((root / "a.txt").read_text(encoding="utf-8"), "hello\n")
+            # research + one edit/apply round only; no extra plan round after apply
+            self.assertEqual(len(client.prompts), 2)
+
+    def test_repeated_read_already_loaded_does_not_loop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "f.txt").write_text("one\ntwo\nthree\n", encoding="utf-8")
+            client = FakeClient([
+                "READ: f.txt",
+                "READ: f.txt",
+                "READ: f.txt",
+                "READY",
+                "DONE",
+            ])
+            agent = Agent(
+                workspace=root,
+                client=client,
+                auto_approve=True,
+                quiet=True,
+                backup_root=root / "backups",
+                max_rounds=6,
+            )
+            result = agent.run("inspect file")
+            # redundant repeated reads must not cause long read loop
+            self.assertLessEqual(len(client.prompts), 4)
+            self.assertFalse(result.error)
+
     def test_run_and_fix_flow(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

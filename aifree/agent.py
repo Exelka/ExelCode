@@ -49,7 +49,7 @@ from .console import (
     utf8_child_env,
 )
 from .gemini import Gemini
-from .render import Palette
+from .render import MarkdownRenderer, Palette
 
 MAX_WRITE_BYTES = 1_000_000
 MAX_READ_BYTES = 2_000_000
@@ -246,6 +246,40 @@ def format_read_key(path: str, start: int | None, end: int | None) -> str:
     if start is not None:
         return f"{path}:{start}-"
     return f"{path}:-{end}"
+
+
+def _read_bounds(start: int | None, end: int | None) -> tuple[int, float]:
+    return (1 if start is None else int(start), float("inf") if end is None else int(end))
+
+
+def _spec_covered(files: dict[str, str], spec: str) -> str | None:
+    """Return reason string if spec is already covered by loaded context, else None."""
+    path, start, end = parse_read_spec(spec)
+    key = format_read_key(path, start, end)
+    if key in files:
+        return f"{key}: already in context"
+    full = files.get(path)
+    if full is not None and not full.startswith("[не удалось прочитать:"):
+        return f"{path}: file already fully in context"
+    # if requesting full file but only partial ranges exist, not fully covered
+    if start is None and end is None:
+        return None
+    req_s, req_e = _read_bounds(start, end)
+    for existing in files:
+        try:
+            epath, es, ee = parse_read_spec(existing)
+        except Exception:
+            continue
+        if epath != path:
+            continue
+        if files.get(existing, "").startswith("[не удалось прочитать:"):
+            continue
+        if es is None and ee is None:
+            return f"{path}: file already fully in context"
+        ex_s, ex_e = _read_bounds(es, ee)
+        if ex_s <= req_s and ex_e >= req_e:
+            return f"{key}: range already in context"
+    return None
 
 
 def is_action_request(text: str) -> bool:
@@ -1443,10 +1477,16 @@ class Agent:
         return answer in ("y", "yes", "д", "да")
 
     # ── чтение и запуск ────────────────────────────────────────────────
-    def _read_into(self, files: dict[str, str], spec: str) -> bool:
+    def _read_into(
+        self, files: dict[str, str], spec: str, redundant: list[str] | None = None
+    ) -> bool:
         path, start, end = parse_read_spec(spec)
         key = format_read_key(path, start, end)
-        if key in files:
+        covered = _spec_covered(files, spec)
+        if covered:
+            if redundant is not None:
+                redundant.append(covered)
+            self._print(self.pal.dim(f"    ↺ {key} (already in context)"))
             return False
         try:
             content = self.ws.read_text(path, start, end)
@@ -1556,7 +1596,11 @@ class Agent:
             self._print(self.pal.dim(f"    {model_name} · {elapsed:.1f}s"))
             self._print()
             if not self.quiet:
-                print(text.strip(), file=self.out)
+                rendered = MarkdownRenderer(color=self.pal.enabled).text(text.strip())
+                if rendered:
+                    print(rendered, file=self.out)
+                else:
+                    print(text.strip(), file=self.out)
             return AgentResult(reply=text.strip(), rounds=1, done=True, touched_files=[])
 
         self._print(self.pal.dim(f"  📁 {self.ws.root}"))
@@ -1569,12 +1613,23 @@ class Agent:
         rounds = 0
 
         # Фаза 1: исследование
+        redundant_reads: list[str] = []
         for _ in range(self.max_rounds):
             rounds += 1
             prompt = build_research_prompt(
                 task, self.ws.tree(), files, self.context_chars,
                 history=self.history, recent_files=self.recent_files,
             )
+            if redundant_reads:
+                hint = (
+                    "\n\n<note>\n"
+                    "Some requested files/ranges are already in context: "
+                    + "; ".join(redundant_reads[:6])
+                    + ". Do not request them again; proceed to plan/edits or answer READY."
+                    + "\n</note>"
+                )
+                prompt += hint
+                redundant_reads = []
             text = self._ask(prompt, "scan: reading project")
             try:
                 plan = parse_agent_response(text)
@@ -1585,11 +1640,12 @@ class Agent:
                 break
             new_reads = 0
             for spec in plan.reads[:12]:
-                if self._read_into(files, spec):
+                if self._read_into(files, spec, redundant_reads):
                     key = format_read_key(*parse_read_spec(spec))
                     if not files[key].startswith("[не удалось прочитать:"):
                         new_reads += 1
             if not new_reads:
+                # all requested reads were redundant/already loaded -> stop scanning
                 break
 
         applied: list[str] = []
@@ -1635,13 +1691,32 @@ class Agent:
             if plan.notes:
                 self._print(plan.notes[:1500])
 
+            redundant_read_hints: list[str] = []
             if plan.reads:
+                new_reads = 0
                 for spec in plan.reads[:12]:
-                    self._read_into(files, spec)
-                feedback_parts.append("Files read. Continue: make changes, run a check, or output DONE.")
-                progressed = True
+                    if self._read_into(files, spec, redundant_read_hints):
+                        key = format_read_key(*parse_read_spec(spec))
+                        if not files[key].startswith("[не удалось прочитать:"):
+                            new_reads += 1
+                if new_reads:
+                    feedback_parts.append(
+                        "Files read. Continue: make changes, run a check, or output DONE."
+                    )
+                    progressed = True
+                elif redundant_read_hints:
+                    feedback_parts.append(
+                        "Requested files/ranges are already fully in context: "
+                        + "; ".join(redundant_read_hints[:6])
+                        + ". Do not request them again; proceed to plan/edits or output DONE."
+                    )
+                else:
+                    feedback_parts.append(
+                        "No readable files were loaded. Proceed to plan/edits or output DONE."
+                    )
 
             # Применение изменений
+            applied_now = False
             if plan.ops:
                 try:
                     prepared = prepare_ops(self.ws, plan.ops)
@@ -1710,6 +1785,7 @@ class Agent:
                         "Applied changes: " + ", ".join(item.path for item in prepared)
                     )
                     progressed = True
+                    applied_now = True
                 else:
                     self._print(self.pal.dim("  sys  · no changes"))
 
@@ -1734,31 +1810,27 @@ class Agent:
             if run_failed:
                 feedback = "\n\n".join(feedback_parts)
                 continue
+
+            # Successful apply with no requested checks -> finish immediately
+            if applied_now and not plan.runs:
+                break
+
             if plan.done and not feedback_parts:
                 break
-            if plan.done and feedback_parts and not run_failed and not plan.ops:
-                # были только успешные run'ы и DONE
-                feedback = "\n\n".join(feedback_parts)
-                # дадим шанс завершиться без лишнего запроса
-                if any(r.get("code") == 0 and not r.get("skipped") for r in ran[-len(plan.runs):] if plan.runs):
-                    break
+            if plan.done and not run_failed:
+                # successful checks/edits or nothing pending
                 break
             if feedback_parts:
-                if plan.done and not run_failed:
-                    break
                 feedback = "\n\n".join(feedback_parts)
                 continue
 
             # Ничего полезного
-            if not feedback:
-                feedback = (
-                    "Ты не вывел ни изменений, ни run, ни READ. "
-                    "Повтори строго в формате file/patch/delete/run/READ или выведи DONE."
-                )
-                continue
             if no_progress >= 2:
                 break
-            feedback = "Нет действий. Если задача решена — выведи DONE, иначе внеси изменения или запусти проверку."
+            feedback = (
+                "Requested files/ranges are already in context or no actions were taken. "
+                "Proceed with edits/run if needed, or output DONE if the task is complete."
+            )
 
         return AgentResult(
             applied=bool(applied),
