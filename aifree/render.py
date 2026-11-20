@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import sys
@@ -50,11 +51,20 @@ class Palette:
 
 
 def terminal_width(default: int = 88) -> int:
+    """Current terminal width (adaptive), with safe fallbacks for Termux/pipes."""
     try:
-        width = shutil.get_terminal_size((default, 24)).columns
+        width = shutil.get_terminal_size((0, 0)).columns
     except OSError:
+        width = 0
+    if not width or width <= 0:
+        try:
+            width = int(os.environ.get("COLUMNS", "0") or "0")
+        except (TypeError, ValueError):
+            width = 0
+    if not width or width <= 0:
         width = default
-    return max(40, min(width, 140))
+    # keep usable on narrow phones (Termux) and wide desktops
+    return max(20, min(int(width), 300))
 
 
 def strip_inline(text: str) -> str:
@@ -81,14 +91,21 @@ def _box_bottom(width: int) -> str:
 
 class MarkdownRenderer:
     def __init__(self, width: int | None = None, color: bool = True):
-        self.width = width or terminal_width()
+        self._fixed_width = width
         self.pal = Palette(color)
         self.in_code = False
         self.code_lang = ""
         self.code_state = new_state()
 
+    @property
+    def width(self) -> int:
+        if self._fixed_width:
+            return max(20, int(self._fixed_width))
+        return terminal_width()
+
     def _box_width(self) -> int:
-        return max(24, min(self.width, 78))
+        # fit narrow Termux screens; cap for readability on wide terminals
+        return max(20, min(self.width - 2, 78)) if self.width < 26 else max(24, min(self.width, 78))
 
     # ── one line ───────────────────────────────────────────────────────
     def line(self, raw: str) -> str:

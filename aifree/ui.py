@@ -128,9 +128,16 @@ class App:
         except (OSError, RuntimeError):
             self.workspace = Path.cwd()
         self.pal = Palette(color)
-        self.width = terminal_width()
+        self._width = None
         self.out = sys.stdout
         self.tty = sys.stdout.isatty()
+
+    @property
+    def width(self) -> int:
+        try:
+            return terminal_width()
+        except Exception:
+            return 88
         self.last_prompt = ""
         self.last_answer = ""
         self.recent_agent_files: list[str] = []
@@ -422,7 +429,7 @@ class App:
         self.client = client
 
         if self.stream and self.tty:
-            renderer = StreamRenderer(self.width, color=self.color)
+            renderer = StreamRenderer(color=self.color)
             state = {"first": True, "model": selected["name"]}
 
             def on_delta(chunk: str) -> None:
@@ -466,7 +473,7 @@ class App:
                 self._error(exc)
                 return
             if self.tty:
-                print(MarkdownRenderer(self.width, color=self.color).text(reply.text))
+                print(MarkdownRenderer(color=self.color).text(reply.text))
             else:
                 print(reply.text)
 
@@ -1404,12 +1411,18 @@ class App:
         title = f" ExelCode {__version__} "
         chat = (self.chat.title or "New chat")[:28]
         model = resolve_model(self.chat.model)["name"]
-        width = min(max(self.width - 2, 56), 80)
-        inner = width - 2
+        width = max(20, min(self.width, 80))
+        inner = max(10, width - 2)
+
+        def fit(text: str) -> str:
+            if len(text) <= inner:
+                return text
+            if inner <= 1:
+                return text[:inner]
+            return text[: inner - 1] + "…"
 
         def row(text: str) -> str:
-            text = text[:inner]
-            return "│" + text.ljust(inner) + "│"
+            return "│" + fit(text).ljust(inner) + "│"
 
         stream = "on" if self.stream else "off"
         smart = "on" if self.smart_route else "off"
@@ -1417,10 +1430,15 @@ class App:
         ws = str(self.workspace)
         if len(ws) > 28:
             ws = "…" + ws[-27:]
+        hint = "/help menu"
+        if len(hint) >= inner:
+            hint_row = fit(hint)
+        else:
+            hint_row = " " * (inner - len(hint)) + hint
         print()
-        print(self.pal.cyan("╭" + "─" + title.ljust(inner - 1, "─") + "╮"))
+        print(self.pal.cyan("╭" + fit("─" + title).ljust(inner, "─") + "╮"))
         print(self.pal.cyan(row(f" chat: {chat} · model: auto→{model} · stream {stream}")))
         print(self.pal.cyan(row(f" smart {smart} · agent {mode} · ws: {ws or '-'}")))
-        print(self.pal.cyan(row(" " * (inner - 11) + "/help menu")))
+        print(self.pal.cyan(row(hint_row)))
         print(self.pal.cyan("╰" + "─" * inner + "╯"))
         print()
