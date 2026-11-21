@@ -233,6 +233,8 @@ def start_background_update_check(
     timeout: float = 6.0,
     ttl: float = CACHE_TTL,
     cache_file: str | Path | None = None,
+    force: bool = False,
+    checker: Callable[[float], UpdateInfo] | None = None,
 ) -> bool:
     """Запускает проверку обновлений в фоне, не блокируя запуск."""
     with _ASYNC_LOCK:
@@ -243,7 +245,7 @@ def start_background_update_check(
         _ASYNC["taken"] = False
         thread = threading.Thread(
             target=_background_worker,
-            args=(timeout, ttl, cache_file),
+            args=(timeout, ttl, cache_file, force, checker),
             name="exelcode-update-check",
             daemon=True,
         )
@@ -252,9 +254,17 @@ def start_background_update_check(
         return True
 
 
-def _background_worker(timeout: float, ttl: float, cache_file) -> None:
+def _background_worker(
+    timeout: float,
+    ttl: float,
+    cache_file,
+    force: bool = False,
+    checker: Callable[[float], UpdateInfo] | None = None,
+) -> None:
     try:
-        info = check_update_cached(timeout=timeout, ttl=ttl, cache_file=cache_file)
+        info = check_update_cached(
+            timeout=timeout, ttl=ttl, cache_file=cache_file, force=force, checker=checker
+        )
     except Exception as exc:  # noqa: BLE001 — фоновая проверка не должна падать
         info = UpdateInfo(current=__version__, error=str(exc))
     with _ASYNC_LOCK:
@@ -336,7 +346,7 @@ def startup_update_check(
     if not interactive:
         return False
     try:
-        info = check_update_cached(timeout=6.0)
+        info = check_update_cached(timeout=6.0, force=True)
     except Exception:
         return False
     if info.error or not info.available:

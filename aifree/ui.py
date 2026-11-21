@@ -413,7 +413,7 @@ class App:
             from .update import start_background_update_check
 
             ttl = float(self.cfg.get("update_check_ttl_hours", 6)) * 3600
-            start_background_update_check(ttl=ttl)
+            start_background_update_check(ttl=ttl, force=True)
         try:
             while True:
                 self._maybe_offer_update()
