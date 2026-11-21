@@ -38,7 +38,7 @@ MODELS = [
         "name": "Auto",
         "hex": "cf41b0e0dd7d53e5",
         "mode": 1,
-        "desc": "автовыбор Google (анонимно — 3.5 Flash-Lite)",
+        "desc": "автовыбор Google: может попасться Hydrogen, иначе Flash-модель с веб-доступом (анонимно)",
     },
     {
         "id": "flash",
