@@ -889,7 +889,7 @@ class App:
             self._new(arg)
         elif cmd in ("chats", "ls", "list"):
             self._chats()
-        elif cmd == "open":
+        elif cmd in ("open", "chat"):
             self._open(arg)
         elif cmd in ("rename", "title"):
             self._rename(arg)
@@ -1048,6 +1048,10 @@ class App:
             self.cfg["last_chat"] = self.chat.id
             save_config(self.cfg)
         self.recent_agent_files = []
+        if self.tty:
+            self.out.write("\033[2J\033[H")
+            self.out.flush()
+            self.banner()
         print(self.pal.green(f"sys   ✓ новый чат: {self.chat.title}"))
         print(self.pal.dim(f"      id: {self.chat.id}"))
 
@@ -1088,6 +1092,10 @@ class App:
         self.cfg["last_chat"] = self.chat.id
         save_config(self.cfg)
         self.recent_agent_files = list(self.chat.recent_files)[-20:]
+        if self.tty:
+            self.out.write("\033[2J\033[H")
+            self.out.flush()
+            self.banner()
         print(self.pal.green(f"  ✓ открыт: {self.chat.title}"))
         print(self.pal.dim(f"  {len(self.chat.messages)} сообщений · {self.chat.model}"))
         if self.chat.agent_goal:
