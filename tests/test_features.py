@@ -280,7 +280,7 @@ class HelpTests(unittest.TestCase):
             "/memory", "/remember", "/forget", "/agent", "/workspace",
             "/agentmode", "/smart", "/agentchat", "/run", "/undo", "/backups",
             "/update", "/check", "/debug", "/proxy", "/settings", "/stats", "/clear",
-            "/about", "/help", "/quit",
+            "/compact", "/about", "/help", "/quit",
         }
         self.assertEqual(set(HELP_DETAILS), dispatched)
         for usage, _ in HELP:

@@ -273,6 +273,13 @@ HELP_GROUPS: list[tuple[str, list[tuple[str, str, str]]]] = [
                 "Когда вывод идёт в файл или пайп, просто добавляет пустую строку.",
             ),
             (
+                "/compact [auto|on|off]",
+                "компактный UI",
+                "Управляет компактным режимом: auto — автоматически в Termux/узких терминалах,\n"
+                "on — всегда компактно, off — обычный вид. По умолчанию auto.\n"
+                "В Termux при активном компактном режиме под баннером показывается ✓ Termux UI.",
+            ),
+            (
                 "/about",
                 "о программе",
                 "Версия ExelCode, используемый протокол и папка данных.",
@@ -622,6 +629,8 @@ class App:
                 return [o for o in ("ask", "auto", "plan") if o.startswith(text.lower())]
             if cmd == "/stream":
                 return [o for o in ("on", "off") if o.startswith(text.lower())]
+            if cmd == "/compact":
+                return [o for o in ("auto", "on", "off") if o.startswith(text.lower())]
             if cmd == "/proxy":
                 opts = ["on", "off", "auto", "always", "list", "add", "remove", "status"]
                 return [o for o in opts if o.startswith(text.lower())]
@@ -905,6 +914,8 @@ class App:
                 self.banner()
             else:
                 print()
+        elif cmd == "compact":
+            self._compact_cmd(arg)
         elif cmd == "stats":
             self._stats()
         elif cmd == "check":
@@ -1932,6 +1943,27 @@ class App:
             return
         save_config(self.cfg)
         print(self.pal.green(f"  ✓ стриминг: {'вкл' if self.stream else 'выкл'}"))
+
+    def _compact_cmd(self, arg: str) -> None:
+        value = (arg or "").strip().lower()
+        if not value:
+            cur = self.cfg.get("compact_ui", "auto")
+            state = "сейчас компактно" if self.compact else "сейчас обычный"
+            print(self.pal.dim(f"  compact_ui: {cur} ({state})"))
+            print(self.pal.dim("  /compact auto|on|off"))
+            return
+        if value in ("вкл", "yes", "true", "1"):
+            value = "on"
+        if value in ("выкл", "no", "false", "0"):
+            value = "off"
+        if value not in ("auto", "on", "off"):
+            print(self.pal.red("  /compact auto|on|off"))
+            return
+        self.cfg["compact_ui"] = value
+        save_config(self.cfg)
+        self._refresh_compact()
+        extra = " (сейчас компактно)" if self.compact else " (сейчас обычный)"
+        print(self.pal.green(f"  ✓ compact_ui: {value}{extra}"))
 
     @staticmethod
     def _copyable_answer(text: str) -> str:
