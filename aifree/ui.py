@@ -944,6 +944,18 @@ class App:
                 for usage, short, _ in items:
                     print(f"   {self.pal.cyan(usage.ljust(column))}  {short}")
         print()
+        print("  " + self.pal.magenta("Сокращения"))
+        by_target: dict[str, list[str]] = {}
+        for alias, target in sorted(HELP_ALIASES.items()):
+            by_target.setdefault(target, []).append(alias)
+        for target, names in sorted(by_target.items()):
+            alias_str = ", ".join(names)
+            if narrow:
+                print(f"   {self.pal.cyan(alias_str)}")
+                print(self.pal.dim(f"      → {target}"))
+            else:
+                print(f"   {self.pal.cyan(alias_str.ljust(16))} → {target}")
+        print()
         print(self.pal.dim("  Ввод: \\ в конце строки — продолжить на следующей."))
         print(self.pal.dim("  Ctrl-C во время ответа останавливает генерацию, в приглашении — выход."))
         print(self.pal.dim("  Tab — автодополнение команд, путей и номеров чатов."))

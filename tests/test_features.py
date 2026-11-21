@@ -262,7 +262,8 @@ class HelpTests(unittest.TestCase):
                 app._help("")
             out = buffer.getvalue()
         for text in ("Команды ExelCode", "Чат", "Агент", "Интерфейс",
-                     "/settings", "/agent", "/help <команда>"):
+                     "/settings", "/agent", "/help <команда>",
+                     "Сокращения", "/dbg", "/ws", "/achat"):
             self.assertIn(text, out)
 
     def test_help_topic_and_aliases(self):
