@@ -287,6 +287,18 @@ class HelpTests(unittest.TestCase):
             out = buffer.getvalue()
         self.assertIn("нет такой команды", out)
 
+    def test_slash_only_shows_help(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                result = app.command("/")
+                result2 = app.command("/   ")
+            out = buffer.getvalue()
+        self.assertIsNone(result)
+        self.assertIsNone(result2)
+        self.assertIn("Команды ExelCode", out)
+
 
 class DiagnosticsTests(unittest.TestCase):
     def test_offline_diagnostics(self):

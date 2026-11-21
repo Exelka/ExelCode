@@ -839,6 +839,9 @@ class App:
     # ── команды ────────────────────────────────────────────────────────
     def command(self, line: str) -> str | None:
         parts = line[1:].split(maxsplit=1)
+        if not parts:
+            self._help()
+            return None
         cmd = parts[0].lower()
         arg = parts[1].strip() if len(parts) > 1 else ""
 
