@@ -49,7 +49,7 @@ from .console import (
     utf8_child_env,
 )
 from .gemini import Gemini
-from .render import MarkdownRenderer, Palette
+from .render import MarkdownRenderer, Palette, compact_mode
 
 MAX_WRITE_BYTES = 1_000_000
 MAX_READ_BYTES = 2_000_000
@@ -121,6 +121,78 @@ CODE_SUFFIXES = {
 
 class AgentError(RuntimeError):
     """Понятная пользователю ошибка агента."""
+
+
+@dataclass
+class CommandRisk:
+    """Оценка опасности команды, которую предлагает агент."""
+
+    level: str = "ok"  # ok | caution | danger
+    reasons: list[str] = field(default_factory=list)
+
+    @property
+    def dangerous(self) -> bool:
+        return self.level == "danger"
+
+
+# Паттерны намеренно консервативные: лучше предупредить лишний раз,
+# чем молча выполнить разрушительную команду в auto-режиме.
+_DANGER_COMMANDS: tuple[tuple[str, str], ...] = (
+    (r"(?:^|[;&|]\s*)sudo\b", "sudo может изменить систему"),
+    (r"\brm\s+-(?:[a-z]*r[a-z]*f|[a-z]*f[a-z]*r)[a-z]*\b", "rm -rf удаляет файлы безвозвратно"),
+    (r"\brm\s+.*\s(?:/|~|\$HOME|\*|\.\.)(?:\s|$)", "rm по системному/домашнему пути"),
+    (r"\b(?:mkfs(?:\.\w+)?|fdisk|parted|diskpart|shred)\b", "команда работы с диском"),
+    (r"\b(?:format(?:\.com)?|shutdown|reboot|poweroff|halt)\b", "команда выключения/форматирования"),
+    (r"\bdd\b[^\n]*\bof=/dev/", "dd может перезаписать устройство"),
+    (r":\s*\(\s*\)\s*\{[^\n]*\|[^\n]*\}", "похоже на fork-бомбу"),
+    (r"\b(?:del|erase)\b[^\n]*\s/[sq]\b", "del /s удаляет дерево файлов"),
+    (r"\b(?:rd|rmdir)\b[^\n]*\s/s\b", "rd /s удаляет дерево каталогов"),
+    (r"\breg\s+delete\b", "удаление ключей реестра"),
+    (r"\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:sh|bash|zsh|python3?)\b", "запуск скачанного скрипта"),
+    (r"\b(?:powershell|pwsh)\b[^\n]*(?:-enc|-e\s|invoke-expression|\biex\b)", "скрытый PowerShell-код"),
+    (r"\bgit\s+reset\s+--hard\b", "git reset --hard теряет незакоммиченные изменения"),
+    (r"\bgit\s+clean\s+-[a-z]*[fdx]", "git clean удаляет неотслеживаемые файлы"),
+    (r"\bchmod\s+-R\s+777\s+/\b", "chmod 777 на весь корень"),
+    (r">\s*/dev/(?:sd|nvme|disk)", "запись напрямую в устройство"),
+    (r">\s*(?:/etc/|/boot/|[A-Za-z]:\\Windows\\)", "запись в системный каталог"),
+)
+
+_CAUTION_COMMANDS: tuple[tuple[str, str], ...] = (
+    (r"\brm\b", "удаление файлов"),
+    (r"\b(?:del|erase|rd|rmdir)\b", "удаление файлов/каталогов"),
+    (r"\b(?:mv|move|rename|ren)\b", "перемещение/переименование файлов"),
+    (r"\b(?:pip|pip3|npm|pnpm|yarn|apt|apt-get|brew|choco|winget)\s+(?:install|add|upgrade|update)\b", "установка пакетов"),
+    (r"\b(?:curl|wget)\b", "сетевой запрос"),
+    (r"\bgit\s+(?:push|reset|checkout|clean|rebase|merge)\b", "изменение git-истории/веток"),
+    (r"\b(?:chmod|chown|chgrp)\b", "изменение прав доступа"),
+    (r"\b(?:docker|systemctl|service|kill|pkill|taskkill)\b", "управление процессами/сервисами"),
+    (r"\b(?:bash|sh|zsh)\s+-c\b", "выполнение вложенного shell-скрипта"),
+)
+
+
+def assess_command(cmd: str) -> CommandRisk:
+    """Классифицирует команду перед запуском.
+
+    danger — блокируется в auto-режиме, в ask требует явного подтверждения;
+    caution — выполняется, но с предупреждением.
+    """
+    text = " ".join((cmd or "").strip().split())
+    if not text:
+        return CommandRisk()
+    low = text.lower()
+    danger_reasons: list[str] = []
+    caution_reasons: list[str] = []
+    for pattern, reason in _DANGER_COMMANDS:
+        if re.search(pattern, low, re.I):
+            danger_reasons.append(reason)
+    if danger_reasons:
+        return CommandRisk("danger", danger_reasons)
+    for pattern, reason in _CAUTION_COMMANDS:
+        if re.search(pattern, low, re.I):
+            caution_reasons.append(reason)
+    if caution_reasons:
+        return CommandRisk("caution", caution_reasons)
+    return CommandRisk()
 
 
 @dataclass
@@ -1359,6 +1431,7 @@ class Agent:
         quiet: bool = False,
         history: list | None = None,
         recent_files: list[str] | None = None,
+        compact: bool | None = None,
     ):
         self.ws = (
             workspace
@@ -1383,6 +1456,7 @@ class Agent:
         self.run_output_chars = run_output_chars
         self.runner = runner or execute_command
         self.quiet = quiet
+        self.compact = compact_mode(force=compact)
         self.history = list(history or [])
         self.recent_files = list(recent_files or [])
         self.client = client or Gemini(model, timeout=timeout)
@@ -1416,6 +1490,7 @@ class Agent:
             icon = colors[item.kind](icons[item.kind])
             print(f"  {icon} {item.kind:<6} {item.path}", file=self.out)
         print(file=self.out)
+        diff_limit = min(self.max_diff_lines, 36) if self.compact else self.max_diff_lines
         for item in prepared:
             lines = diff_for(item)
             if not lines:
@@ -1423,7 +1498,7 @@ class Agent:
             print(self.pal.bold(f"  {item.path}"), file=self.out)
             shown = 0
             for line in lines:
-                if shown >= self.max_diff_lines:
+                if shown >= diff_limit:
                     print(self.pal.dim("  … diff truncated"), file=self.out)
                     break
                 line = line.rstrip("\n")
@@ -1457,11 +1532,14 @@ class Agent:
             return False
         return answer in ("y", "yes", "д", "да")
 
-    def _approve_run(self, cmd: str) -> bool:
+    def _approve_run(self, cmd: str, risk: CommandRisk | None = None) -> bool:
         if self.auto_approve:
             return True
         short = cmd if len(cmd) <= 140 else cmd[:137] + "…"
-        question = f"  выполнить команду: {short}?"
+        if risk is not None and risk.dangerous:
+            question = f"  выполнить ОПАСНУЮ команду: {short}?"
+        else:
+            question = f"  выполнить команду: {short}?"
         cb = self.confirm_run_cb
         if cb is not None:
             try:
@@ -1503,6 +1581,9 @@ class Agent:
         failed = False
         for cmd in runs:
             self._print(self.pal.cyan(f"  $ {cmd}"))
+            risk = assess_command(cmd)
+            for reason in risk.reasons:
+                self._print(self.pal.yellow(f"    ⚠ {reason}"))
             if self.dry_run:
                 self._print(self.pal.yellow("    dry-run: command not executed"))
                 feedback_parts.append(
@@ -1513,7 +1594,28 @@ class Agent:
                     {"cmd": cmd, "code": None, "output": "", "elapsed": 0.0, "skipped": True}
                 )
                 continue
-            if not self._approve_run(cmd):
+            if risk.dangerous and self.auto_approve:
+                self._print(self.pal.red(
+                    "    ⛔ заблокировано политикой безопасности (опасная команда)"
+                ))
+                feedback_parts.append(
+                    f"<run command={cmd!r} status='blocked' elapsed='0.0s'>\n"
+                    "[blocked by safety policy: dangerous command. "
+                    "Propose a safer alternative or ask the user to run it manually.]\n</run>"
+                )
+                records.append(
+                    {
+                        "cmd": cmd,
+                        "code": None,
+                        "output": "",
+                        "elapsed": 0.0,
+                        "skipped": True,
+                        "blocked": True,
+                    }
+                )
+                failed = True
+                continue
+            if not self._approve_run(cmd, risk):
                 self._print(self.pal.dim("    skipped"))
                 feedback_parts.append(
                     f"<run command={cmd!r} status='skipped' elapsed='0.0s'>\n"
@@ -1596,7 +1698,9 @@ class Agent:
             self._print(self.pal.dim(f"    {model_name} · {elapsed:.1f}s"))
             self._print()
             if not self.quiet:
-                rendered = MarkdownRenderer(color=self.pal.enabled).text(text.strip())
+                rendered = MarkdownRenderer(
+                    color=self.pal.enabled, compact=self.compact
+                ).text(text.strip())
                 if rendered:
                     print(rendered, file=self.out)
                 else:

@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -16,10 +18,15 @@ from pathlib import Path
 from typing import Callable
 
 from . import __version__
+from .config import DATA_DIR
 
 REPO = "Exelka/ExelCode"
 VERSION_FILE = "aifree/__init__.py"
 _VERSION_RE = re.compile(r'__version__\s*=\s*["\']([^"\']+)["\']')
+
+
+CACHE_TTL = 6 * 3600.0
+CACHE_FILE = DATA_DIR / "update_check.json"
 
 
 @dataclass
@@ -28,6 +35,8 @@ class UpdateInfo:
     latest: str | None = None
     url: str = ""
     error: str | None = None
+    cached: bool = False
+    checked_at: float = 0.0
 
     @property
     def available(self) -> bool:
@@ -152,6 +161,116 @@ def check_update(timeout: float = 10.0) -> UpdateInfo:
     return info
 
 
+def _cache_path(cache_file: str | Path | None = None) -> Path:
+    return Path(cache_file) if cache_file else CACHE_FILE
+
+
+def load_cached_update(cache_file: str | Path | None = None) -> UpdateInfo | None:
+    """Читает последнюю успешную проверку обновлений (если есть)."""
+    path = _cache_path(cache_file)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    latest = str(data.get("latest") or "").strip()
+    if not latest:
+        return None
+    checked_at = float(data.get("checked_at", 0) or 0)
+    return UpdateInfo(
+        current=__version__,
+        latest=latest,
+        url=str(data.get("url") or f"https://github.com/{REPO}"),
+        cached=True,
+        checked_at=checked_at,
+    )
+
+
+def save_cached_update(
+    info: UpdateInfo, cache_file: str | Path | None = None
+) -> None:
+    if info.error or not info.latest:
+        return
+    path = _cache_path(cache_file)
+    payload = {
+        "latest": info.latest,
+        "url": info.url,
+        "checked_at": info.checked_at or time.time(),
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def check_update_cached(
+    timeout: float = 6.0,
+    ttl: float = CACHE_TTL,
+    force: bool = False,
+    cache_file: str | Path | None = None,
+    checker: Callable[[float], UpdateInfo] | None = None,
+) -> UpdateInfo:
+    """Проверка обновлений с кэшем: не дёргает сеть чаще, чем раз в ttl."""
+    if not force:
+        cached = load_cached_update(cache_file)
+        if cached and time.time() - cached.checked_at <= max(0.0, ttl):
+            return cached
+    fetch = checker or check_update
+    info = fetch(timeout)
+    if not info.error and info.latest:
+        info.checked_at = time.time()
+        save_cached_update(info, cache_file)
+    return info
+
+
+_ASYNC_LOCK = threading.Lock()
+_ASYNC: dict = {"thread": None, "info": None, "taken": True}
+
+
+def start_background_update_check(
+    timeout: float = 6.0,
+    ttl: float = CACHE_TTL,
+    cache_file: str | Path | None = None,
+) -> bool:
+    """Запускает проверку обновлений в фоне, не блокируя запуск."""
+    with _ASYNC_LOCK:
+        thread = _ASYNC.get("thread")
+        if thread is not None and thread.is_alive():
+            return False
+        _ASYNC["info"] = None
+        _ASYNC["taken"] = False
+        thread = threading.Thread(
+            target=_background_worker,
+            args=(timeout, ttl, cache_file),
+            name="exelcode-update-check",
+            daemon=True,
+        )
+        _ASYNC["thread"] = thread
+        thread.start()
+        return True
+
+
+def _background_worker(timeout: float, ttl: float, cache_file) -> None:
+    try:
+        info = check_update_cached(timeout=timeout, ttl=ttl, cache_file=cache_file)
+    except Exception as exc:  # noqa: BLE001 — фоновая проверка не должна падать
+        info = UpdateInfo(current=__version__, error=str(exc))
+    with _ASYNC_LOCK:
+        _ASYNC["info"] = info
+
+
+def take_background_update() -> UpdateInfo | None:
+    """Возвращает результат фоновой проверки один раз (если готов)."""
+    with _ASYNC_LOCK:
+        info = _ASYNC.get("info")
+        if info is None or _ASYNC.get("taken"):
+            return None
+        _ASYNC["taken"] = True
+        return info
+
+
 def install_update(timeout: float = 120.0) -> tuple[bool, str]:
     root = _repo_root()
     if not root:
@@ -217,7 +336,7 @@ def startup_update_check(
     if not interactive:
         return False
     try:
-        info = check_update(timeout=6.0)
+        info = check_update_cached(timeout=6.0)
     except Exception:
         return False
     if info.error or not info.available:

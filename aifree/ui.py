@@ -25,6 +25,7 @@ from .config import (
 from .agent import (
     Agent,
     AgentError,
+    assess_command,
     default_workspace,
     execute_command,
     is_action_request,
@@ -34,7 +35,13 @@ from .agent import (
 )
 from .gemini import MODELS, Gemini, GeminiError, resolve_model
 from .prompt import build_prompt, make_summary_prompt, summary_candidates
-from .render import MarkdownRenderer, Palette, StreamRenderer, terminal_width
+from .render import (
+    MarkdownRenderer,
+    Palette,
+    StreamRenderer,
+    compact_mode,
+    terminal_width,
+)
 from .store import Chat, ChatStore, Memory, human_time
 
 HELP = [
@@ -57,6 +64,8 @@ HELP = [
     ("/clear", "очистить экран"),
     ("/stats", "статистика и пути"),
     ("/check", "проверить связь с Gemini"),
+    ("/debug [--no-net]", "диагностика окружения и протокола"),
+    ("/settings [ключ значение]", "все настройки и их изменение"),
     ("/update", "проверить обновления и установить"),
     ("/smart on|off", "авто-выбор: чат или действие"),
     ("/agent [task]", "агент: меню или задача по файлам"),
@@ -73,6 +82,7 @@ HELP = [
 COMMANDS = [name.split()[0] for name, _ in HELP] + [
     "/h", "/?", "/exit", "/q", "/ls", "/list", "/rm", "/title", "/mem",
     "/cls", "/about", "/version", "/ws", "/amode", "/mode", "/do", "/achat",
+    "/dbg", "/config", "/cfg",
 ]
 
 _ANSI_RE = re.compile(r"(\x1b\[[0-?]*[ -/]*[@-~])")
@@ -133,9 +143,24 @@ class App:
         self.tty = sys.stdout.isatty()
         self.last_prompt = ""
         self.last_answer = ""
-        self.recent_agent_files: list[str] = []
+        self.last_error = ""
+        self.recent_agent_files: list[str] = list(
+            getattr(chat, "recent_files", []) or []
+        )[-20:]
+        self.compact = compact_mode(force=self._compact_force())
         self.client: Gemini | None = None
         self._readline = self._setup_readline()
+
+    def _compact_force(self) -> bool | None:
+        value = str(self.cfg.get("compact_ui", "auto")).strip().lower()
+        if value in ("on", "1", "yes", "вкл", "true"):
+            return True
+        if value in ("off", "0", "no", "выкл", "false"):
+            return False
+        return None
+
+    def _refresh_compact(self) -> None:
+        self.compact = compact_mode(force=self._compact_force())
 
     @property
     def width(self) -> int:
@@ -153,8 +178,15 @@ class App:
             print(self.pal.green("  ✓ чат→агент: вкл"))
         if self.smart_route or self.agent_chat:
             print()
+        if self.tty:
+            # Не блокируем запуск: результат проверки подхватится позже.
+            from .update import start_background_update_check
+
+            ttl = float(self.cfg.get("update_check_ttl_hours", 6)) * 3600
+            start_background_update_check(ttl=ttl)
         try:
             while True:
+                self._maybe_offer_update()
                 try:
                     line = self._read_input()
                 except (EOFError, KeyboardInterrupt):
@@ -180,6 +212,28 @@ class App:
             self._write_history()
             print(self.pal.dim("sys  пока"))
         return 0
+
+    def _maybe_offer_update(self) -> None:
+        from .update import install_update, restart_program, take_background_update
+
+        info = take_background_update()
+        if not info or info.error or not info.available:
+            return
+        print()
+        print(self.pal.yellow(
+            f"sys   доступно обновление: {info.latest} (текущая {info.current})"
+        ))
+        if not self._confirm("sys   установить и перезапустить?"):
+            print(self.pal.dim("sys   пропущено"))
+            return
+        print(self.pal.dim("sys   устанавливаю обновление…"))
+        ok, msg = install_update(timeout=180.0)
+        if ok:
+            print(self.pal.green(f"sys   ✓ {msg}"))
+            print(self.pal.dim("sys   перезапускаю ExelCode..."))
+            restart_program()
+        else:
+            print(self.pal.red(f"sys   ✗ {msg}"))
 
     def one_shot(self, text: str, as_json: bool = False) -> int:
         if not text.strip():
@@ -320,6 +374,11 @@ class App:
                 return [o for o in ("ask", "auto", "plan") if o.startswith(text.lower())]
             if cmd == "/stream":
                 return [o for o in ("on", "off") if o.startswith(text.lower())]
+            if cmd in ("/settings", "/config", "/cfg"):
+                keys = sorted(set(self._SETTINGS_INTS) | set(self._SETTINGS_ALIASES))
+                return [o for o in keys if o.startswith(text.lower())]
+            if cmd in ("/debug", "/dbg"):
+                return [o for o in ("--no-net",) if o.startswith(text.lower())]
             if cmd == "/memory":
                 return [o for o in ("clear",) if o.startswith(text.lower())]
             if cmd in ("/system",):
@@ -347,6 +406,20 @@ class App:
                 return self._path_completions(text)
 
         # второй аргумент
+        if arg_index == 2 and cmd in ("/settings", "/config", "/cfg"):
+            key = self._SETTINGS_ALIASES.get(
+                (parts[1].lower() if len(parts) > 1 else ""),
+                (parts[1].lower() if len(parts) > 1 else ""),
+            )
+            options = {
+                "stream": ("on", "off"),
+                "smart_route": ("on", "off"),
+                "agent_chat": ("on", "off"),
+                "compact_ui": ("auto", "on", "off"),
+                "agent_mode": ("ask", "auto", "plan"),
+            }.get(key, ())
+            return [o for o in options if o.startswith(text.lower())]
+
         if arg_index == 2 and cmd == "/agent":
             sub = parts[1].lower() if len(parts) > 1 else ""
             if sub in ("mode", "режим"):
@@ -436,7 +509,7 @@ class App:
         self.client = client
 
         if self.stream and self.tty:
-            renderer = StreamRenderer(color=self.color)
+            renderer = StreamRenderer(color=self.color, compact=self.compact)
             state = {"first": True, "model": selected["name"]}
 
             def on_delta(chunk: str) -> None:
@@ -480,23 +553,29 @@ class App:
                 self._error(exc)
                 return
             if self.tty:
-                print(MarkdownRenderer(color=self.color).text(reply.text))
+                print(MarkdownRenderer(color=self.color, compact=self.compact).text(reply.text))
             else:
                 print(reply.text)
 
         self.chat.add("assistant", reply.text, model=reply.model)
         self.last_answer = reply.text
         self._save()
-        print(
-            self.pal.dim(
-                f"        {reply.chars} chars · {reply.elapsed:.1f}s · model {reply.model} · /copy"
+        if self.compact:
+            print(self.pal.dim(
+                f"  {reply.elapsed:.1f}s · {reply.model} · /copy"
+            ))
+        else:
+            print(
+                self.pal.dim(
+                    f"        {reply.chars} chars · {reply.elapsed:.1f}s · model {reply.model} · /copy"
+                )
             )
-        )
         self._maybe_summarize()
 
     def _error(self, exc: Exception) -> None:
+        self.last_error = str(exc)
         print(self.pal.red(f"agent ! error: {exc}"))
-        print(self.pal.dim("sys   /retry · /model · /help"))
+        print(self.pal.dim("sys   /retry · /model · /debug · /help"))
 
     def _maybe_summarize(self) -> None:
         candidates = summary_candidates(
@@ -567,6 +646,10 @@ class App:
             self._stats()
         elif cmd == "check":
             self._check()
+        elif cmd in ("debug", "dbg"):
+            self._debug(arg)
+        elif cmd in ("settings", "config", "cfg"):
+            self._settings(arg)
         elif cmd == "update":
             self._update()
         elif cmd == "agent":
@@ -628,6 +711,7 @@ class App:
         if not self.ephemeral:
             self.cfg["last_chat"] = self.chat.id
             save_config(self.cfg)
+        self.recent_agent_files = []
         print(self.pal.green(f"sys   ✓ новый чат: {self.chat.title}"))
         print(self.pal.dim(f"      id: {self.chat.id}"))
 
@@ -667,8 +751,11 @@ class App:
             return
         self.cfg["last_chat"] = self.chat.id
         save_config(self.cfg)
+        self.recent_agent_files = list(self.chat.recent_files)[-20:]
         print(self.pal.green(f"  ✓ открыт: {self.chat.title}"))
         print(self.pal.dim(f"  {len(self.chat.messages)} сообщений · {self.chat.model}"))
+        if self.chat.agent_goal:
+            print(self.pal.dim(f"  агент: {self.chat.agent_goal[:80]}"))
         for msg in self.chat.messages[-2:]:
             who = "вы" if msg.role == "user" else "gemini"
             text = " ".join(msg.content.split())
@@ -706,6 +793,7 @@ class App:
         print(self.pal.green(f"  ✓ удалён: {title}"))
         if chat_id == self.chat.id:
             self.chat = self.store.new(model=self.chat.model, system=self.chat.system)
+            self.recent_agent_files = []
             self.cfg["last_chat"] = self.chat.id
             save_config(self.cfg)
             print(self.pal.dim(f"  открыт новый чат: {self.chat.id}"))
@@ -856,6 +944,9 @@ class App:
         print(f"  память:   {len(self.memory.items)} фактов")
         print(f"  агент:    {self.workspace}")
         print(f"  режим:    {AGENT_MODE_NAMES.get(self.agent_mode, self.agent_mode)}")
+        if self.chat.agent_goal:
+            print(f"  задача:   {self.chat.agent_goal[:70]}")
+        print(f"  файлы:    {len(self.recent_agent_files)} в контексте агента")
         chat_mode = "вкл (сообщения → агенту)" if self.agent_chat else "выкл"
         print(f"  чат→агент:{chat_mode}")
         smart = "вкл (сам решает чат/действие)" if self.smart_route else "выкл"
@@ -878,6 +969,163 @@ class App:
             print(self.pal.red(f"  ✗ {exc}"))
             return
         print(self.pal.green(f"  ✓ ответ за {reply.elapsed:.1f} с, модель {reply.model}"))
+
+    def _debug(self, arg: str = "") -> None:
+        live = "--no-net" not in (arg or "")
+        print(self.pal.dim("  собираю диагностику…"))
+        try:
+            from .diagnostics import collect_diagnostics, format_diagnostics
+
+            rows = collect_diagnostics(self.workspace, live=live)
+            if self.last_error:
+                rows.append(("Ошибки", "последняя", self.last_error[:300]))
+            print()
+            print(format_diagnostics(rows))
+        except Exception as exc:  # noqa: BLE001 — диагностика не должна падать
+            print(self.pal.red(f"  ✗ диагностика не удалась: {exc}"))
+        print(self.pal.dim("  без сети: /debug --no-net · JSON-вывод: --debug --json"))
+
+    _SETTINGS_ALIASES = {
+        "smart": "smart_route",
+        "agentchat": "agent_chat",
+        "chat_to_agent": "agent_chat",
+        "mode": "agent_mode",
+        "compact": "compact_ui",
+        "update_ttl": "update_check_ttl_hours",
+        "run_timeout": "agent_run_timeout",
+        "run_output": "agent_run_output_chars",
+        "context": "agent_context_chars",
+        "diff_lines": "agent_max_diff_lines",
+        "rounds": "agent_max_rounds",
+        "edit_rounds": "agent_max_edit_rounds",
+        "fix_rounds": "agent_max_fix_rounds",
+        "summary_after": "summary_after_messages",
+        "keep_recent": "summary_keep_recent",
+    }
+    _SETTINGS_INTS = {
+        "timeout": (5, 600, "сек"),
+        "max_context_chars": (1000, 200000, "симв."),
+        "summary_after_messages": (4, 200, "сообщ."),
+        "summary_keep_recent": (1, 100, "сообщ."),
+        "agent_context_chars": (2000, 200000, "симв."),
+        "agent_max_rounds": (1, 20, "раундов"),
+        "agent_max_edit_rounds": (1, 20, "раундов"),
+        "agent_max_fix_rounds": (0, 20, "раундов"),
+        "agent_run_timeout": (5, 600, "сек"),
+        "agent_run_output_chars": (500, 100000, "симв."),
+        "agent_max_diff_lines": (10, 500, "строк"),
+        "update_check_ttl_hours": (0, 168, "ч"),
+    }
+
+    def _settings(self, arg: str = "") -> None:
+        arg = (arg or "").strip()
+        if not arg:
+            self._print_settings()
+            return
+        parts = arg.split(maxsplit=1)
+        key = self._SETTINGS_ALIASES.get(parts[0].lower(), parts[0].lower())
+        value = parts[1].strip() if len(parts) > 1 else ""
+
+        if key in ("model", "workspace", "agent_workspace", "last_chat"):
+            hint = {
+                "model": "/model <имя>",
+                "workspace": "/workspace <путь>",
+                "agent_workspace": "/workspace <путь>",
+                "last_chat": "выбирается через /open",
+            }[key]
+            print(self.pal.dim(f"  {key} меняется командой: {hint}"))
+            return
+
+        if key == "stream":
+            self._stream(value)
+            return
+        if key == "smart_route":
+            self._smart(value)
+            return
+        if key == "agent_chat":
+            self._agentchat(value)
+            return
+        if key == "agent_mode":
+            self._agentmode(value)
+            return
+        if key == "compact_ui":
+            if not value:
+                print(self.pal.dim(
+                    f"  compact_ui: {self.cfg.get('compact_ui', 'auto')}"
+                ))
+                return
+            if value.lower() not in ("auto", "on", "off", "вкл", "выкл"):
+                print(self.pal.red("  compact_ui: auto, on или off"))
+                return
+            normalized = {"вкл": "on", "выкл": "off"}.get(value.lower(), value.lower())
+            self.cfg["compact_ui"] = normalized
+            save_config(self.cfg)
+            self._refresh_compact()
+            print(self.pal.green(f"  ✓ compact_ui: {normalized}"))
+            return
+        if key == "system":
+            self._system("reset" if value.lower() in ("reset", "off", "сброс") else value)
+            return
+        if key in self._SETTINGS_INTS:
+            low, high, unit = self._SETTINGS_INTS[key]
+            if not value:
+                print(self.pal.dim(f"  {key}: {self.cfg.get(key)} {unit}"))
+                return
+            try:
+                number = int(value)
+            except ValueError:
+                print(self.pal.red(f"  {key}: нужно число ({low}…{high} {unit})"))
+                return
+            if not low <= number <= high:
+                print(self.pal.red(f"  {key}: допустимо {low}…{high} {unit}"))
+                return
+            self.cfg[key] = number
+            save_config(self.cfg)
+            self._refresh_compact()
+            print(self.pal.green(f"  ✓ {key}: {number} {unit}"))
+            return
+        print(self.pal.red(f"  неизвестная настройка: {key}"))
+        print(self.pal.dim("  /settings — список ключей"))
+
+    def _print_settings(self) -> None:
+        def flag(value: bool) -> str:
+            return self.pal.green("вкл") if value else self.pal.dim("выкл")
+
+        def row(key: str, value) -> None:
+            print(f"  {self.pal.cyan(key.ljust(24))} {value}")
+
+        print()
+        print(self.pal.bold("  Настройки"))
+        print(self.pal.dim("  Основное"))
+        row("model", f"{self.chat.model} → {resolve_model(self.chat.model)['name']}")
+        row("stream", flag(self.stream))
+        row("compact_ui", self.cfg.get("compact_ui", "auto") + (
+            " (сейчас компактно)" if self.compact else ""
+        ))
+        row("timeout", f"{self.cfg['timeout']} сек")
+        row("max_context_chars", self.cfg["max_context_chars"])
+        row("summary_after_messages", self.cfg["summary_after_messages"])
+        row("summary_keep_recent", self.cfg["summary_keep_recent"])
+        row("system", (self.chat.system or "(по умолчанию)")[:60])
+        print(self.pal.dim("  Агент"))
+        row("agent_workspace", self.workspace)
+        row("agent_mode", AGENT_MODE_NAMES.get(self.agent_mode, self.agent_mode))
+        row("smart_route", flag(self.smart_route))
+        row("agent_chat", flag(self.agent_chat))
+        row("agent_context_chars", self.cfg["agent_context_chars"])
+        row("agent_max_rounds", self.cfg["agent_max_rounds"])
+        row("agent_max_edit_rounds", self.cfg["agent_max_edit_rounds"])
+        row("agent_max_fix_rounds", self.cfg.get("agent_max_fix_rounds", 4))
+        row("agent_run_timeout", f"{self.cfg.get('agent_run_timeout', 60)} сек")
+        row("agent_run_output_chars", self.cfg.get("agent_run_output_chars", 8000))
+        row("agent_max_diff_lines", self.cfg["agent_max_diff_lines"])
+        print(self.pal.dim("  Прочее"))
+        row("update_check_ttl_hours", self.cfg.get("update_check_ttl_hours", 6))
+        row("last_chat", self.chat.id)
+        print()
+        print(self.pal.dim("  изменить: /settings <ключ> <значение> · пример: /settings timeout 90"))
+        print(self.pal.dim(f"  конфиг: {CONFIG_FILE}"))
+        print()
 
     # ── агент ──────────────────────────────────────────────────────────
     def _agent(self, arg: str) -> None:
@@ -960,6 +1208,10 @@ class App:
         print(f"  чат→агент: {chat_mode}")
         smart = "вкл — сам решает чат или действие" if self.smart_route else "выкл"
         print(f"  умный:     {smart}")
+        if self.chat.agent_goal:
+            print(f"  задача:    {self.chat.agent_goal[:70]}")
+        if self.recent_agent_files:
+            print(f"  файлы:     {', '.join(self.recent_agent_files[-5:])}")
         print()
         options = [
             ("1", "Новая задача"),
@@ -1043,6 +1295,7 @@ class App:
             run_output_chars=int(self.cfg.get("agent_run_output_chars", 8000)),
             history=history,
             recent_files=recent_files,
+            compact=self.compact,
         )
 
     def _run_agent_task(self, task: str, mode: str | None = None) -> None:
@@ -1061,7 +1314,7 @@ class App:
             print(self.pal.red(f"sys  · ошибка: {exc}"))
             return
 
-        self._record_agent_result(task, result)
+        self._record_agent_result(task, result, mode=mode)
 
         if result.error:
             print(self.pal.red(f"sys  · ошибка: {result.error}"))
@@ -1075,12 +1328,17 @@ class App:
             if result.ran:
                 ok = sum(1 for r in result.ran if r.get("code") == 0)
                 print(self.pal.dim(f"      проверки: {len(result.ran)}, успешно: {ok}"))
+                blocked = sum(1 for r in result.ran if r.get("blocked"))
+                if blocked:
+                    print(self.pal.red(
+                        f"      заблокировано политикой безопасности: {blocked}"
+                    ))
             if result.backup:
                 print(self.pal.dim(f"      откат: /undo · бэкап: {result.backup}"))
         else:
             print(self.pal.dim("sys  · изменений нет"))
 
-    def _record_agent_result(self, task: str, result) -> None:
+    def _record_agent_result(self, task: str, result, mode: str = "") -> None:
         # track recent files for follow-ups (session/chat context)
         touched = list(getattr(result, "touched_files", []) or [])
         if not touched and getattr(result, "changed", None):
@@ -1098,6 +1356,12 @@ class App:
         if getattr(result, "error", "") and not getattr(result, "applied", False) and not getattr(result, "ran", None):
             # failed with nothing done - no useful context to record
             return
+
+        # состояние агента живёт вместе с чатом (переживает перезапуск)
+        self.chat.recent_files = list(self.recent_agent_files)
+        self.chat.agent_goal = task.strip()[:300]
+        if mode:
+            self.chat.agent_mode = mode
 
         parts = [f'[agent task] {task.strip()[:200]}']
         changed = list(getattr(result, "changed", []) or [])
@@ -1259,6 +1523,11 @@ class App:
             return
         print(self.pal.dim(f"  папка: {self.workspace}"))
         print(self.pal.cyan(f"  $ {cmd}"))
+        risk = assess_command(cmd)
+        for reason in risk.reasons:
+            print(self.pal.yellow(f"  ⚠ {reason}"))
+        if risk.dangerous:
+            print(self.pal.red("  ⚠ опасная команда — подтверждайте только если понимаете последствия"))
         if not self._confirm("  выполнить команду?"):
             print(self.pal.dim("  отмена"))
             return
@@ -1363,10 +1632,10 @@ class App:
         return False
 
     def _update(self) -> None:
-        from .update import check_update, install_update, restart_program
+        from .update import check_update_cached, install_update, restart_program
 
         print(self.pal.dim("sys   проверяю обновления…"))
-        info = check_update(timeout=12.0)
+        info = check_update_cached(timeout=12.0, force=True)
         if info.error:
             print(self.pal.red(f"sys   ✗ не удалось проверить: {info.error}"))
             return
@@ -1422,6 +1691,22 @@ class App:
         model = f"auto→{model_name}"
         ws = str(self.workspace or "-")
         width = max(20, min(self.width, 80))
+
+        if self.compact:
+            limit = max(20, width)
+            def short(text: str) -> str:
+                return text if len(text) <= limit else text[: limit - 1] + "…"
+
+            print()
+            print(
+                self.pal.cyan(short(f"ExelCode {__version__}"))
+                + self.pal.dim(short(f" · {model}"))
+            )
+            print(self.pal.dim(short(f"чат: {chat}")))
+            print(self.pal.dim(short(f"папка: {ws} · /help")))
+            print()
+            return
+
         inner = max(10, width - 2)
 
         def fit(text: str, limit: int | None = None) -> str:

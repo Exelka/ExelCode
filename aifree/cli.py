@@ -37,6 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ephemeral", action="store_true", help="не сохранять чат")
     parser.add_argument("--json", action="store_true", help="вывод JSON (с -p)")
     parser.add_argument("--check", action="store_true", help="проверить связь с Gemini")
+    parser.add_argument("--debug", action="store_true", help="диагностика окружения и Gemini")
     parser.add_argument("--agent", action="store_true", help="режим агента: чтение и правка файлов")
     parser.add_argument("--workspace", help="папка проекта для агента")
     parser.add_argument("--agent-mode", choices=["ask", "auto", "plan"], help="режим агента")
@@ -77,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
         return _print_backups(cfg, pal)
     if args.update:
         return _cmd_update(pal, auto_yes=bool(args.yes))
+    if args.debug:
+        return _debug(cfg, as_json=bool(args.json))
     if (args.yes or args.dry_run) and not args.agent and not args.update:
         print("ошибка: --yes и --dry-run требуют --agent (или --update)", file=sys.stderr)
         return 2
@@ -140,12 +143,7 @@ def main(argv: list[str] | None = None) -> int:
         agent_mode=cfg.get("agent_mode"),
     )
 
-    # Auto-update check on interactive startup (silent if up-to-date / on failure)
-    if not text and not args.json and sys.stdin.isatty() and sys.stdout.isatty():
-        from .update import startup_update_check
-
-        startup_update_check(interactive=True)
-
+    # Проверка обновлений запускается в фоне внутри App.run(), не блокируя старт.
     if text:
         return app.one_shot(text, as_json=args.json)
     return app.run()
@@ -230,6 +228,30 @@ def _check(pal: Palette, timeout: float) -> int:
     return 0
 
 
+def _debug(cfg: dict, as_json: bool = False) -> int:
+    from .agent import default_workspace
+    from .diagnostics import collect_diagnostics, format_diagnostics
+
+    try:
+        workspace = default_workspace(cfg)
+    except (OSError, RuntimeError):
+        workspace = Path.cwd()
+    try:
+        rows = collect_diagnostics(workspace, live=True)
+    except Exception as exc:  # noqa: BLE001 — диагностика не должна падать
+        print(f"ошибка диагностики: {exc}", file=sys.stderr)
+        return 1
+    if as_json:
+        print(json.dumps(
+            [{"section": s, "key": k, "value": v} for s, k, v in rows],
+            ensure_ascii=False,
+            indent=2,
+        ))
+    else:
+        print(format_diagnostics(rows))
+    return 0
+
+
 def _run_agent(args, cfg: dict, text: str, pal: Palette) -> int:
     from .agent import Agent, AgentError, default_workspace, normalize_agent_mode
 
@@ -299,6 +321,9 @@ def _run_agent(args, cfg: dict, text: str, pal: Palette) -> int:
         if result.ran:
             ok = sum(1 for r in result.ran if r.get("code") == 0)
             print(pal.dim(f"проверки: {len(result.ran)}, успешно: {ok}"))
+            blocked = sum(1 for r in result.ran if r.get("blocked"))
+            if blocked:
+                print(pal.red(f"заблокировано политикой безопасности: {blocked}"))
         if result.backup:
             print(pal.dim(f"откат: --undo · бэкап: {result.backup}"))
     else:
@@ -352,10 +377,10 @@ def _print_backups(cfg: dict, pal: Palette) -> int:
 
 
 def _cmd_update(pal: Palette, auto_yes: bool = False) -> int:
-    from .update import check_update, install_update, restart_program
+    from .update import check_update_cached, install_update, restart_program
 
     print("Проверяю обновления…")
-    info = check_update(timeout=12.0)
+    info = check_update_cached(timeout=12.0, force=True)
     if info.error:
         print(pal.red(f"  ✗ не удалось проверить: {info.error}"))
         return 1

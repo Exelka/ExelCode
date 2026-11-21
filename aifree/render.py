@@ -50,6 +50,33 @@ class Palette:
         return self._wrap("37", text)
 
 
+def is_termux() -> bool:
+    """Похоже ли окружение на Termux (узкий экран, мобильная клавиатура)."""
+    prefix = os.environ.get("PREFIX", "")
+    return (
+        "com.termux" in prefix
+        or bool(os.environ.get("TERMUX_VERSION"))
+        or os.environ.get("EXELCODE_TERMUX") == "1"
+    )
+
+
+def compact_mode(width: int | None = None, force: bool | None = None) -> bool:
+    """Компактный вывод для узких терминалов и Termux.
+
+    force=True/False включает/выключает принудительно (настройка compact_ui).
+    """
+    if force is not None:
+        return bool(force)
+    env = os.environ.get("EXELCODE_COMPACT", "").strip().lower()
+    if env in ("1", "on", "true", "yes", "да"):
+        return True
+    if env in ("0", "off", "false", "no", "нет"):
+        return False
+    if is_termux():
+        return True
+    return (width if width is not None else terminal_width()) < 56
+
+
 def terminal_width(default: int = 88) -> int:
     """Current terminal width (adaptive), with safe fallbacks for Termux/pipes."""
     try:
@@ -90,9 +117,15 @@ def _box_bottom(width: int) -> str:
 
 
 class MarkdownRenderer:
-    def __init__(self, width: int | None = None, color: bool = True):
+    def __init__(
+        self,
+        width: int | None = None,
+        color: bool = True,
+        compact: bool | None = None,
+    ):
         self._fixed_width = width
         self.pal = Palette(color)
+        self.compact = compact_mode(width, compact)
         self.in_code = False
         self.code_lang = ""
         self.code_state = new_state()
@@ -105,6 +138,8 @@ class MarkdownRenderer:
 
     def _box_width(self) -> int:
         # fit narrow Termux screens; cap for readability on wide terminals
+        if self.compact:
+            return max(18, min(self.width, 78))
         return max(20, min(self.width - 2, 78)) if self.width < 26 else max(24, min(self.width, 78))
 
     # ── one line ───────────────────────────────────────────────────────
@@ -163,7 +198,7 @@ class MarkdownRenderer:
         if bullet:
             indent = bullet.group(1)
             body = strip_inline(bullet.group(2))
-            avail = max(20, self.width - len(indent) - 4)
+            avail = max(12 if self.compact else 20, self.width - len(indent) - 4)
             chunks = textwrap.wrap(
                 body, width=avail, break_long_words=False, break_on_hyphens=False
             ) or [""]
@@ -175,7 +210,7 @@ class MarkdownRenderer:
         if numbered:
             indent, number, body = numbered.groups()
             prefix = f"{indent}{number}. "
-            avail = max(20, self.width - len(prefix) - 2)
+            avail = max(12 if self.compact else 20, self.width - len(prefix) - 2)
             chunks = textwrap.wrap(
                 strip_inline(body),
                 width=avail,
@@ -222,8 +257,14 @@ class MarkdownRenderer:
 class StreamRenderer:
     """Prints response as it arrives, line by line."""
 
-    def __init__(self, width: int | None = None, color: bool = True, out=None):
-        self.md = MarkdownRenderer(width=width, color=color)
+    def __init__(
+        self,
+        width: int | None = None,
+        color: bool = True,
+        out=None,
+        compact: bool | None = None,
+    ):
+        self.md = MarkdownRenderer(width=width, color=color, compact=compact)
         self.out = out or sys.stdout
         self.buffer = ""
         self.printed = False

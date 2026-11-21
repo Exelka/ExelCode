@@ -161,6 +161,12 @@ def parse_frame_texts(line: str) -> list[str]:
     return out
 
 
+def parse_bl(page: str) -> str | None:
+    """Достаёт build-id `cfb2h` из HTML страницы Gemini."""
+    match = re.search(r'"cfb2h":"([^"]{10,120})"', page or "")
+    return match.group(1) if match else None
+
+
 def fetch_bl(force: bool = False, timeout: float = 25) -> str:
     if _BL_CACHE["value"] and not force and time.time() - _BL_CACHE["ts"] < _BL_TTL:
         return _BL_CACHE["value"]
@@ -174,10 +180,10 @@ def fetch_bl(force: bool = False, timeout: float = 25) -> str:
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         page = resp.read().decode("utf-8", "replace")
-    match = re.search(r'"cfb2h":"([^"]{10,120})"', page)
-    if not match:
+    bl = parse_bl(page)
+    if not bl:
         raise GeminiError("Gemini: на странице нет cfb2h (изменился протокол?)")
-    _BL_CACHE.update(value=match.group(1), ts=time.time())
+    _BL_CACHE.update(value=bl, ts=time.time())
     return _BL_CACHE["value"]
 
 

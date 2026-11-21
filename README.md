@@ -4,7 +4,7 @@
 Использует анонимный веб-протокол `gemini.google.com`.
 
 ```
-╭─ ExelCode 1.5.6 ──────────────────────────────────────────────╮
+╭─ ExelCode 1.6.0 ──────────────────────────────────────────────╮
 │ чат: Новый чат                              модель: auto→3.5… │
 │ папка: ~/project                                      /help │
 ╰───────────────────────────────────────────────────────────────╯
@@ -27,7 +27,13 @@ agent · 3.5 Flash-Lite · 1.8s
 - 🎭 **роль ассистента** (`/system`) — например, «отвечай как строгий редактор»;
 - 🔁 `/retry`, экспорт в markdown, статистика;
 - 🤖 **агент**: читает файлы проекта, создаёт и меняет их с diff, бэкапом и откатом; умеет читать фрагменты больших файлов и запускать проверки с авто-исправлением;
+- 🛡 **защита от опасных команд**: `rm -rf`, `sudo`, `curl | sh`, `git reset --hard` и подобные блокируются в auto-режиме и явно предупреждаются в `ask`;
+- 🧠 **состояние агента в чате**: недавние файлы и последняя задача сохраняются и помогают в «продолжай»;
 - ⚡ **умный режим**: сам понимает, когда нужно создать/изменить файл, а когда просто ответить текстом;
+- ⚙️ **`/settings`**: все настройки в одном месте, включая таймауты, лимиты и компактный UI;
+- 🩺 **`/debug`**: диагностика версии, путей, прокси, git и Gemini-протокола;
+- 🔄 **фоновые обновления**: проверка не блокирует старт, результат кэшируется;
+- 📱 **компактный UI** для Termux и узких терминалов;
 - ⌨️ автодополнение команд по `Tab` и подсказки по `/`;
 - 🎨 markdown в терминале: списки, код, заголовки, переносы;
 - 🌈 **подсветка синтаксиса** в блоках кода: Python, JS/TS, C/C++/C#/Java, Go,
@@ -86,6 +92,7 @@ python3 main.py -m flash              # выбрать модель
 python3 main.py --no-stream           # без стриминга
 python3 main.py --ephemeral -p "..."  # не сохранять чат
 python3 main.py --check               # проверить связь с Gemini
+python3 main.py --debug               # диагностика (можно с --json)
 python3 main.py --agent --workspace ~/project --yes -p "создай hello.py"
 python3 main.py --agent --workspace ~/project --dry-run -p "..."
 python3 main.py --agent --agent-mode plan -p "покажи план"
@@ -115,6 +122,8 @@ python3 main.py --agent --backups      # точки отката
 | `/clear` | очистить экран |
 | `/stats` | статистика и пути |
 | `/check` | проверить связь с Gemini |
+| `/debug [--no-net]` | диагностика окружения и Gemini-протокола |
+| `/settings [ключ значение]` | все настройки и их изменение |
 | `/smart on\|off` | умный режим: сам решает чат или действие |
 | `/agent [задача]` | агент: меню или задача по файлам |
 | `/agentchat on\|off` | все обычные сообщения → агенту |
@@ -132,6 +141,26 @@ python3 main.py --agent --backups      # точки отката
 - `Ctrl-C` во время ответа останавливает генерацию и сохраняет часть ответа;
 - `Ctrl-C` в приглашении `вы ›` — выход;
 - `Tab` — автодополнение команд (`/ag` → `/agent`) и аргументов (`/smart o` → `on`, пути, номера чатов).
+
+## Настройки, диагностика и компактный режим
+
+`/settings` показывает все текущие значения. Менять можно точечно:
+
+```text
+/settings timeout 90
+/settings compact_ui on        # auto | on | off
+/settings agent_run_timeout 120
+/settings agent_max_diff_lines 80
+/settings update_check_ttl_hours 6
+```
+
+`/debug` собирает сведения для багрепорта: версию, Python, платформу, пути,
+прокси, git-ветку/коммит, кэш обновлений и доступность `cfb2h`.
+`/debug --no-net` не ходит в сеть, `--debug --json` даёт машинный вывод.
+
+На узких экранах и в Termux включается компактный вывод: баннер без рамки,
+короче подписи и diff. Управление — `/settings compact_ui auto|on|off`
+или переменная `EXELCODE_COMPACT=1/0`.
 
 ## Подсветка кода
 
@@ -227,6 +256,9 @@ python3 main.py --workspace ~/project --undo
 - запрещены `..`, `~`, `.git`, `.env`, ключи, бинарные файлы;
 - `SEARCH` в patch должен совпадать ровно один раз;
 - перед записью — подтверждение и резервная копия; команды запускаются с подтверждением;
+- опасные команды (`rm -rf`, `sudo`, `curl | sh`, `git reset --hard`, `del /s`,
+  `mkfs`, `shutdown` и т.п.) в auto-режиме **блокируются**, а в `ask`
+  показываются с явным предупреждением;
 - откат: `/undo` или `--undo`, список — `/backups`/`--backups`;
 - при не-интерактивном запуске без `--yes` агент работает в режиме плана.
 
@@ -244,7 +276,9 @@ python3 main.py --workspace ~/project --undo
   "agent_max_fix_rounds": 4,
   "agent_run_timeout": 60,
   "agent_run_output_chars": 8000,
-  "agent_max_diff_lines": 120
+  "agent_max_diff_lines": 120,
+  "compact_ui": "auto",
+  "update_check_ttl_hours": 6
 }
 ```
 
@@ -281,6 +315,7 @@ hex-id в `aifree/gemini.py` → `MODELS`.
 ├── memory.json          # long-term memory
 ├── exports/             # markdown exports
 ├── backups/             # agent backups
+├── update_check.json    # кэш проверки обновлений
 └── history              # readline history
 
 ~/.config/exelcode/config.json   # model, stream, last chat
@@ -312,7 +347,7 @@ On Windows by default: `%LOCALAPPDATA%\ExelCode\` for data and `%APPDATA%\ExelCo
 
 ## Тесты
 
-Быстрые тесты без сети (38 тестов):
+Быстрые тесты без сети (74 теста), включая фикстуры Gemini и smoke-тесты CLI:
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -325,8 +360,8 @@ python -m unittest discover -s tests -v   # Windows
 ExelCode/
 ├── main.py              # entry point
 ├── bin/aifree(.cmd)     # launcher
-├── aifree/              # core package (cli, ui, gemini, agent, store, prompt, render, highlight, config, console)
-├── tests/               # offline tests
+├── aifree/              # core package (cli, ui, gemini, agent, store, prompt, render, highlight, config, console, update, diagnostics)
+├── tests/               # offline tests + fixtures/gemini
 ├── README.md
 └── ПРОГРЕСС.md
 ```

@@ -47,10 +47,15 @@ class Chat:
     system: str = ""
     summary: str = ""
     summary_upto: int = 0
+    # Состояние агента, привязанное к чату (переживает перезапуск).
+    recent_files: list[str] = field(default_factory=list)
+    agent_goal: str = ""
+    agent_mode: str = ""
     messages: list[Message] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Chat":
+        recent = data.get("recent_files", [])
         return cls(
             id=str(data["id"]),
             title=str(data.get("title", "New chat")),
@@ -60,6 +65,9 @@ class Chat:
             system=str(data.get("system", "")),
             summary=str(data.get("summary", "")),
             summary_upto=int(data.get("summary_upto", 0)),
+            recent_files=[str(x) for x in recent if x] if isinstance(recent, list) else [],
+            agent_goal=str(data.get("agent_goal", "")),
+            agent_mode=str(data.get("agent_mode", "")),
             messages=[Message.from_dict(m) for m in data.get("messages", [])],
         )
 
