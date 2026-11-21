@@ -1672,8 +1672,7 @@ class App:
                     ))
             if result.backup:
                 print(self.pal.dim(f"      откат: /undo · бэкап: {result.backup}"))
-        else:
-            print(self.pal.dim("sys  · изменений нет"))
+        # для обычного ответа без файловых операций ничего не показываем
 
     def _record_agent_result(self, task: str, result, mode: str = "") -> None:
         # track recent files for follow-ups (session/chat context)
@@ -2146,16 +2145,16 @@ class App:
 
         if self.compact:
             limit = max(20, width)
+
             def short(text: str) -> str:
                 return text if len(text) <= limit else text[: limit - 1] + "…"
 
             print()
-            print(
-                self.pal.cyan(short(f"ExelCode {__version__}"))
-                + self.pal.dim(short(f" · {model}"))
-            )
+            print(self.pal.cyan(short(f"ExelCode {__version__}")))
+            print(self.pal.dim(short(f"модель: {model}")))
             print(self.pal.dim(short(f"чат: {chat}")))
-            print(self.pal.dim(short(f"папка: {ws} · /help")))
+            print(self.pal.dim(short(f"папка: {ws}")))
+            print(self.pal.dim(short("/help")))
             print()
             return
 

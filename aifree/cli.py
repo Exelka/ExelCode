@@ -331,8 +331,7 @@ def _run_agent(args, cfg: dict, text: str, pal: Palette) -> int:
                 print(pal.red(f"заблокировано политикой безопасности: {blocked}"))
         if result.backup:
             print(pal.dim(f"откат: --undo · бэкап: {result.backup}"))
-    else:
-        print(pal.dim("изменений нет"))
+    # plain answer / no file actions: no extra status line
     return 0 if not result.error else 1
 
 
