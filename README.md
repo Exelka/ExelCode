@@ -4,7 +4,7 @@
 Использует анонимный веб-протокол `gemini.google.com`.
 
 ```
-╭─ ExelCode 1.7.3 ──────────────────────────────────────────────╮
+╭─ ExelCode 1.7.4 ──────────────────────────────────────────────╮
 │ чат: Новый чат                              модель: auto→3.5… │
 │ папка: ~/project                                      /help │
 ╰───────────────────────────────────────────────────────────────╯
@@ -336,9 +336,9 @@ python3 main.py --workspace ~/project --undo
 ```json
 {
   "agent_workspace": "/path/to/project",
-  "agent_mode": "ask",
+  "agent_mode": "auto",
   "agent_chat": false,
-  "smart_route": false,
+  "smart_route": true,
   "agent_context_chars": 30000,
   "agent_max_rounds": 6,
   "agent_max_edit_rounds": 4,

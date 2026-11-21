@@ -50,16 +50,16 @@ DEFAULTS = {
     "summary_keep_recent": 6,
     "timeout": 60,
     "agent_workspace": "",
-    "agent_mode": "ask",  # ask | auto | dry-run
+    "agent_mode": "auto",  # ask | auto | dry-run
     "agent_chat": False,  # обычные сообщения отправлять агенту
-    "smart_route": False,  # сам решать: чат или агент
+    "smart_route": True,  # сам решать: чат или агент
     "agent_context_chars": 30000,
     "agent_max_rounds": 6,
     "agent_max_edit_rounds": 4,
     "agent_max_fix_rounds": 4,
     "agent_run_timeout": 60,
     "agent_run_output_chars": 8000,
-    "agent_auto_approve": False,  # совместимость
+    "agent_auto_approve": True,  # совместимость
     "agent_max_diff_lines": 120,
     "compact_ui": "auto",  # auto | on | off (узкие терминалы/Termux)
     "proxy_mode": "off",  # off | auto | always
