@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from . import __version__
+from . import proxy as proxy_mod
 from .config import (
     BACKUPS_DIR,
     CHATS_DIR,
@@ -239,6 +240,14 @@ HELP_GROUPS: list[tuple[str, list[tuple[str, str, str]]]] = [
                 "Удобно приложить к багрепорту.",
             ),
             (
+                "/proxy [режим|команда]",
+                "прокси для Gemini",
+                "off — не использовать прокси; auto (или on) — при сетевой ошибке пробовать прокси;\n"
+                "always — всегда через прокси. /proxy list — список, /proxy add <host:port> — добавить свой,\n"
+                "/proxy remove <n|url> — удалить из пользовательского списка.\n"
+                "Пример: /proxy auto",
+            ),
+            (
                 "/settings [ключ значение]",
                 "настройки",
                 "Без аргумента — все настройки и текущие значения. С ключом — показать или изменить.\n"
@@ -408,6 +417,9 @@ class App:
             status_lines.append("  ✓ умный режим: вкл")
         if self.agent_chat:
             status_lines.append("  ✓ чат→агент: вкл")
+        proxy_mode = proxy_mod.get_mode()
+        if proxy_mode != "off":
+            status_lines.append(f"  ✓ прокси: {proxy_mode}")
         if is_termux() and self.compact:
             status_lines.append("  ✓ Termux UI")
         for line in status_lines:
@@ -610,6 +622,9 @@ class App:
                 return [o for o in ("ask", "auto", "plan") if o.startswith(text.lower())]
             if cmd == "/stream":
                 return [o for o in ("on", "off") if o.startswith(text.lower())]
+            if cmd == "/proxy":
+                opts = ["on", "off", "auto", "always", "list", "add", "remove", "status"]
+                return [o for o in opts if o.startswith(text.lower())]
             if cmd in ("/settings", "/config", "/cfg"):
                 keys = sorted(set(self._SETTINGS_INTS) | set(self._SETTINGS_ALIASES))
                 return [o for o in keys if o.startswith(text.lower())]
@@ -661,6 +676,7 @@ class App:
                 "agent_chat": ("on", "off"),
                 "compact_ui": ("auto", "on", "off"),
                 "agent_mode": ("ask", "auto", "plan"),
+                "proxy_mode": ("off", "auto", "always", "on"),
             }.get(key, ())
             return [o for o in options if o.startswith(text.lower())]
 
@@ -897,6 +913,8 @@ class App:
             self._debug(arg)
         elif cmd in ("settings", "config", "cfg"):
             self._settings(arg)
+        elif cmd == "proxy":
+            self._proxy(arg)
         elif cmd == "update":
             self._update()
         elif cmd == "agent":
@@ -1294,6 +1312,8 @@ class App:
         "mode": "agent_mode",
         "compact": "compact_ui",
         "update_ttl": "update_check_ttl_hours",
+        "proxy": "proxy_mode",
+        "proxy_mode": "proxy_mode",
         "run_timeout": "agent_run_timeout",
         "run_output": "agent_run_output_chars",
         "context": "agent_context_chars",
@@ -1349,6 +1369,9 @@ class App:
             return
         if key == "agent_mode":
             self._agentmode(value)
+            return
+        if key == "proxy_mode":
+            self._proxy(value or "status")
             return
         if key == "compact_ui":
             if not value:
@@ -1422,6 +1445,7 @@ class App:
         row("agent_run_output_chars", self.cfg.get("agent_run_output_chars", 8000))
         row("agent_max_diff_lines", self.cfg["agent_max_diff_lines"])
         print(self.pal.dim("  Прочее"))
+        row("proxy_mode", self.cfg.get("proxy_mode", "off"))
         row("update_check_ttl_hours", self.cfg.get("update_check_ttl_hours", 6))
         row("last_chat", self.chat.id)
         print()
@@ -1949,6 +1973,83 @@ class App:
         except Exception:
             return False
         return False
+
+    def _proxy(self, arg: str = "") -> None:
+        arg = (arg or "").strip()
+        if not arg or arg.lower() in ("status", "show"):
+            st = proxy_mod.status()
+            mode = st["mode"]
+            onoff = self.pal.green(mode) if mode != "off" else self.pal.dim(mode)
+            print(f"  прокси: {onoff}")
+            print(self.pal.dim(f"  доступно: {st['count']} (пользовательских: {st['user_count']})"))
+            print(self.pal.dim(f"  файл своих: {st['user_file']}"))
+            print(self.pal.dim("  /proxy auto|on|off|always  ·  /proxy list  ·  /proxy add <host:port>"))
+            return
+
+        parts = arg.split(maxsplit=1)
+        cmd = parts[0].lower()
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+        if cmd in ("on", "auto", "off", "always", "вкл", "выкл"):
+            try:
+                mode = proxy_mod.set_mode(cmd)
+            except ValueError as exc:
+                print(self.pal.red(f"  {exc}"))
+                return
+            self.cfg["proxy_mode"] = mode
+            save_config(self.cfg)
+            if mode == "off":
+                print(self.pal.green("  ✓ прокси: выкл"))
+            else:
+                print(self.pal.green(f"  ✓ прокси: {mode}"))
+                print(self.pal.dim(
+                    "  auto — fallback при сетевой ошибке; always — всегда через прокси"
+                ))
+            return
+
+        if cmd in ("list", "ls"):
+            proxies = proxy_mod.load_proxies()
+            user = set(proxy_mod.user_proxies())
+            if not proxies:
+                print(self.pal.dim("  список прокси пуст"))
+                return
+            print()
+            print(self.pal.bold(f"  Прокси ({len(proxies)})"))
+            limit = 50
+            for i, p in enumerate(proxies[:limit], 1):
+                mark = self.pal.cyan("*") if p in user else " "
+                print(f"  {mark} {str(i).rjust(2)}. {p}")
+            if len(proxies) > limit:
+                print(self.pal.dim(f"  … и ещё {len(proxies) - limit}"))
+            print(self.pal.dim("  * — добавленные вами"))
+            print()
+            return
+
+        if cmd == "add":
+            if not rest:
+                print(self.pal.red("  /proxy add <host:port>"))
+                return
+            try:
+                p = proxy_mod.add_user_proxy(rest)
+            except ValueError as exc:
+                print(self.pal.red(f"  {exc}"))
+                return
+            print(self.pal.green(f"  ✓ добавлен: {p}"))
+            print(self.pal.dim(f"  файл: {proxy_mod.USER_FILE}"))
+            return
+
+        if cmd in ("remove", "rm", "del"):
+            if not rest:
+                print(self.pal.red("  /proxy remove <номер|url>"))
+                return
+            ok = proxy_mod.remove_user_proxy(rest)
+            if ok:
+                print(self.pal.green(f"  ✓ удалён: {rest}"))
+            else:
+                print(self.pal.red("  не найден в пользовательском списке"))
+            return
+
+        print(self.pal.red("  /proxy on|off|auto|always|list|add|remove"))
 
     def _update(self) -> None:
         from .update import check_update_cached, install_update, restart_program

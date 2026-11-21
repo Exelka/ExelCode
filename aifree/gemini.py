@@ -17,6 +17,8 @@ import urllib.request
 import uuid
 from dataclasses import dataclass
 
+from . import proxy
+
 UA = (
     "Mozilla/5.0 (Linux; Android 13; Pixel 7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
@@ -178,7 +180,7 @@ def fetch_bl(force: bool = False, timeout: float = 25) -> str:
             "Accept-Encoding": "identity",
         },
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with proxy.urlopen(req, timeout=timeout) as resp:
         page = resp.read().decode("utf-8", "replace")
     bl = parse_bl(page)
     if not bl:
@@ -290,7 +292,7 @@ class Gemini:
         )
 
         try:
-            response = urllib.request.urlopen(req, timeout=self.timeout)
+            response = proxy.urlopen(req, timeout=self.timeout)
         except urllib.error.HTTPError as exc:
             detail = _read_error(exc)
             if exc.code == 429:

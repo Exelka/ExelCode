@@ -279,7 +279,7 @@ class HelpTests(unittest.TestCase):
             "/retry", "/model", "/models", "/stream", "/copy", "/system",
             "/memory", "/remember", "/forget", "/agent", "/workspace",
             "/agentmode", "/smart", "/agentchat", "/run", "/undo", "/backups",
-            "/update", "/check", "/debug", "/settings", "/stats", "/clear",
+            "/update", "/check", "/debug", "/proxy", "/settings", "/stats", "/clear",
             "/about", "/help", "/quit",
         }
         self.assertEqual(set(HELP_DETAILS), dispatched)

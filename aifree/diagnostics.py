@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import __version__
 from .config import CONFIG_FILE, DATA_DIR, load_config
+from . import proxy as proxy_mod
 from .gemini import PAGE_URL, fetch_bl
 from .render import compact_mode, is_termux, terminal_width
 from .update import load_cached_update
@@ -52,6 +53,14 @@ def _git_rows(workspace: Path) -> list[tuple[str, str, str]]:
     ]
 
 
+def _proxy_mode() -> str:
+    try:
+        st = proxy_mod.status()
+        return f"{st['mode']} ({st['count']} прокси, {st['user_count']} своих)"
+    except Exception:
+        return "?"
+
+
 def collect_diagnostics(
     workspace: str | Path | None = None,
     live: bool = True,
@@ -77,11 +86,12 @@ def collect_diagnostics(
         ("Пути", "данные", str(DATA_DIR)),
         ("Пути", "конфиг", f"{CONFIG_FILE} ({'есть' if CONFIG_FILE.is_file() else 'нет'})"),
         ("Пути", "EXELCODE_HOME", os.environ.get("EXELCODE_HOME", "—")),
-        ("Сеть", "прокси", ", ".join(
+        ("Сеть", "прокси (env)", ", ".join(
             f"{key}={os.environ[key]}"
             for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
             if os.environ.get(key)
         ) or "не задан"),
+        ("Сеть", "прокси (ExelCode)", _proxy_mode()),
         ("Сеть", "URL", PAGE_URL),
     ]
     rows.extend(_git_rows(ws))

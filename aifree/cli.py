@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import __version__
 from .config import BACKUPS_DIR, DATA_DIR, ensure_dirs, load_config, save_config
+from . import proxy as proxy_mod
 from .console import setup_console
 from .gemini import MODELS, Gemini, GeminiError, resolve_model
 from .render import Palette
@@ -59,6 +60,10 @@ def main(argv: list[str] | None = None) -> int:
 
     ensure_dirs()
     cfg = load_config()
+    try:
+        proxy_mod.set_mode(str(cfg.get("proxy_mode", "off")))
+    except ValueError:
+        proxy_mod.set_mode("off")
     store = ChatStore(DATA_DIR / "chats")
     memory = Memory(DATA_DIR / "memory.json")
     color = bool(sys.stdout.isatty()) and not args.no_color and not os.environ.get("NO_COLOR")
