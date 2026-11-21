@@ -437,8 +437,7 @@ class App:
             # Не блокируем запуск: результат проверки подхватится позже.
             from .update import start_background_update_check
 
-            ttl = float(self.cfg.get("update_check_ttl_hours", 6)) * 3600
-            start_background_update_check(ttl=ttl, force=True)
+            start_background_update_check()
         try:
             while True:
                 self._maybe_offer_update()
@@ -1322,7 +1321,7 @@ class App:
         "chat_to_agent": "agent_chat",
         "mode": "agent_mode",
         "compact": "compact_ui",
-        "update_ttl": "update_check_ttl_hours",
+       
         "proxy": "proxy_mode",
         "proxy_mode": "proxy_mode",
         "run_timeout": "agent_run_timeout",
@@ -1347,7 +1346,6 @@ class App:
         "agent_run_timeout": (5, 600, "сек"),
         "agent_run_output_chars": (500, 100000, "симв."),
         "agent_max_diff_lines": (10, 500, "строк"),
-        "update_check_ttl_hours": (0, 168, "ч"),
     }
 
     def _settings(self, arg: str = "") -> None:
@@ -1457,7 +1455,6 @@ class App:
         row("agent_max_diff_lines", self.cfg["agent_max_diff_lines"])
         print(self.pal.dim("  Прочее"))
         row("proxy_mode", self.cfg.get("proxy_mode", "off"))
-        row("update_check_ttl_hours", self.cfg.get("update_check_ttl_hours", 6))
         row("last_chat", self.chat.id)
         print()
         print(self.pal.dim("  изменить: /settings <ключ> <значение> · пример: /settings timeout 90"))
@@ -2086,7 +2083,7 @@ class App:
         from .update import check_update_cached, install_update, restart_program
 
         print(self.pal.dim("sys   проверяю обновления…"))
-        info = check_update_cached(timeout=12.0, force=True)
+        info = check_update_cached(timeout=12.0)
         if info.error:
             print(self.pal.red(f"sys   ✗ не удалось проверить: {info.error}"))
             return

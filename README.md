@@ -4,7 +4,7 @@
 Использует анонимный веб-протокол `gemini.google.com`.
 
 ```
-╭─ ExelCode 1.7.2 ──────────────────────────────────────────────╮
+╭─ ExelCode 1.7.3 ──────────────────────────────────────────────╮
 │ чат: Новый чат                              модель: auto→3.5… │
 │ папка: ~/project                                      /help │
 ╰───────────────────────────────────────────────────────────────╯
@@ -32,7 +32,7 @@ agent · 3.5 Flash-Lite · 1.8s
 - ⚡ **умный режим**: сам понимает, когда нужно создать/изменить файл, а когда просто ответить текстом;
 - ⚙️ **`/settings`**: все настройки в одном месте, включая таймауты, лимиты и компактный UI;
 - 🩺 **`/debug`**: диагностика версии, путей, прокси, git и Gemini-протокола;
-- 🔄 **фоновые обновления**: проверка не блокирует старт, результат кэшируется;
+- 🔄 **обновления при старте**: проверка на каждом запуске, без КД, в фоне;
 - 📱 **компактный UI** для Termux и узких терминалов;
 - ⌨️ автодополнение команд по `Tab` и подсказки по `/`;
 - 🎨 markdown в терминале: списки, код, заголовки, переносы;
@@ -197,7 +197,6 @@ python3 main.py --agent --backups      # точки отката
 /settings compact_ui on        # auto | on | off
 /settings agent_run_timeout 120
 /settings agent_max_diff_lines 80
-/settings update_check_ttl_hours 6
 ```
 
 `/debug` собирает сведения для багрепорта: версию, Python, платформу, пути,
@@ -348,7 +347,6 @@ python3 main.py --workspace ~/project --undo
   "agent_run_output_chars": 8000,
   "agent_max_diff_lines": 120,
   "compact_ui": "auto",
-  "update_check_ttl_hours": 6,
   "proxy_mode": "off"
 }
 ```
@@ -418,7 +416,7 @@ On Windows by default: `%LOCALAPPDATA%\ExelCode\` for data and `%APPDATA%\ExelCo
 
 ## Тесты
 
-Быстрые тесты без сети (90 тестов), включая фикстуры Gemini и smoke-тесты CLI:
+Быстрые тесты без сети (88 тестов), включая фикстуры Gemini и smoke-тесты CLI:
 
 ```bash
 python3 -m unittest discover -s tests -v

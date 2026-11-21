@@ -25,7 +25,6 @@ VERSION_FILE = "aifree/__init__.py"
 _VERSION_RE = re.compile(r'__version__\s*=\s*["\']([^"\']+)["\']')
 
 
-CACHE_TTL = 6 * 3600.0
 CACHE_FILE = DATA_DIR / "update_check.json"
 
 
@@ -207,16 +206,10 @@ def save_cached_update(
 
 def check_update_cached(
     timeout: float = 6.0,
-    ttl: float = CACHE_TTL,
-    force: bool = False,
     cache_file: str | Path | None = None,
     checker: Callable[[float], UpdateInfo] | None = None,
 ) -> UpdateInfo:
-    """Проверка обновлений с кэшем: не дёргает сеть чаще, чем раз в ttl."""
-    if not force:
-        cached = load_cached_update(cache_file)
-        if cached and time.time() - cached.checked_at <= max(0.0, ttl):
-            return cached
+    """Проверка обновлений. КД нет: всегда ходим в сеть; кэш только для диагностики."""
     fetch = checker or check_update
     info = fetch(timeout)
     if not info.error and info.latest:
@@ -231,9 +224,7 @@ _ASYNC: dict = {"thread": None, "info": None, "taken": True}
 
 def start_background_update_check(
     timeout: float = 6.0,
-    ttl: float = CACHE_TTL,
     cache_file: str | Path | None = None,
-    force: bool = False,
     checker: Callable[[float], UpdateInfo] | None = None,
 ) -> bool:
     """Запускает проверку обновлений в фоне, не блокируя запуск."""
@@ -245,7 +236,7 @@ def start_background_update_check(
         _ASYNC["taken"] = False
         thread = threading.Thread(
             target=_background_worker,
-            args=(timeout, ttl, cache_file, force, checker),
+            args=(timeout, cache_file, checker),
             name="exelcode-update-check",
             daemon=True,
         )
@@ -256,14 +247,12 @@ def start_background_update_check(
 
 def _background_worker(
     timeout: float,
-    ttl: float,
     cache_file,
-    force: bool = False,
     checker: Callable[[float], UpdateInfo] | None = None,
 ) -> None:
     try:
         info = check_update_cached(
-            timeout=timeout, ttl=ttl, cache_file=cache_file, force=force, checker=checker
+            timeout=timeout, cache_file=cache_file, checker=checker
         )
     except Exception as exc:  # noqa: BLE001 — фоновая проверка не должна падать
         info = UpdateInfo(current=__version__, error=str(exc))
@@ -346,7 +335,7 @@ def startup_update_check(
     if not interactive:
         return False
     try:
-        info = check_update_cached(timeout=6.0, force=True)
+        info = check_update_cached(timeout=6.0)
     except Exception:
         return False
     if info.error or not info.available:

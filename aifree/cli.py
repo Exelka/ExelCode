@@ -384,7 +384,7 @@ def _cmd_update(pal: Palette, auto_yes: bool = False) -> int:
     from .update import check_update_cached, install_update, restart_program
 
     print("Проверяю обновления…")
-    info = check_update_cached(timeout=12.0, force=True)
+    info = check_update_cached(timeout=12.0)
     if info.error:
         print(pal.red(f"  ✗ не удалось проверить: {info.error}"))
         return 1

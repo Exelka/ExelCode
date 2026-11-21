@@ -62,7 +62,6 @@ DEFAULTS = {
     "agent_auto_approve": False,  # совместимость
     "agent_max_diff_lines": 120,
     "compact_ui": "auto",  # auto | on | off (узкие терминалы/Termux)
-    "update_check_ttl_hours": 6,  # как часто проверять обновления в фоне
     "proxy_mode": "off",  # off | auto | always
 }
 
