@@ -311,6 +311,8 @@ def restart_program(argv: list[str] | None = None) -> None:
     try:
         # Flush stdio before replacing process
         try:
+            if sys.stdout.isatty():
+                sys.stdout.write("\033[2J\033[H")
             sys.stdout.flush()
             sys.stderr.flush()
         except Exception:

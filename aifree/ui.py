@@ -421,6 +421,9 @@ class App:
 
     # ── запуск ─────────────────────────────────────────────────────────
     def run(self) -> int:
+        if self.tty:
+            self.out.write("\033[2J\033[H")
+            self.out.flush()
         self.banner()
         status_lines = []
         if self.smart_route:
