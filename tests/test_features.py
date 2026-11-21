@@ -130,7 +130,7 @@ class CompactUiTests(unittest.TestCase):
             app.tty = True
             buffer = io.StringIO()
             with patch("aifree.ui.is_termux", return_value=True), \
-                 patch("aifree.update.start_background_update_check"), \
+                 patch.object(app, "_startup_update_check"), \
                  patch.object(app, "_read_input", side_effect=EOFError), \
                  patch.object(app, "_write_history"), \
                  patch.object(app, "_save"):

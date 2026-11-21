@@ -434,13 +434,9 @@ class App:
         if status_lines:
             print()
         if self.tty:
-            # Не блокируем запуск: результат проверки подхватится позже.
-            from .update import start_background_update_check
-
-            start_background_update_check()
+            self._startup_update_check()
         try:
             while True:
-                self._maybe_offer_update()
                 try:
                     line = self._read_input()
                 except (EOFError, KeyboardInterrupt):
@@ -467,11 +463,14 @@ class App:
             print(self.pal.dim("sys  пока"))
         return 0
 
-    def _maybe_offer_update(self) -> None:
-        from .update import install_update, restart_program, take_background_update
+    def _startup_update_check(self) -> None:
+        from .update import check_update_cached, install_update, restart_program
 
-        info = take_background_update()
-        if not info or info.error or not info.available:
+        try:
+            info = check_update_cached(timeout=6.0)
+        except Exception:
+            return
+        if info.error or not info.available:
             return
         print()
         print(self.pal.yellow(
@@ -488,6 +487,7 @@ class App:
             restart_program()
         else:
             print(self.pal.red(f"sys   ✗ {msg}"))
+
 
     def one_shot(self, text: str, as_json: bool = False) -> int:
         if not text.strip():
