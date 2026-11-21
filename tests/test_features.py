@@ -224,6 +224,70 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(app.chat.recent_files, ["src/a.py", "src/b.py"])
 
 
+class HelpTests(unittest.TestCase):
+    def test_every_command_has_explanation(self):
+        from aifree.ui import HELP, HELP_ALIASES, HELP_DETAILS, HELP_GROUPS
+
+        dispatched = {
+            "/new", "/chats", "/open", "/rename", "/delete", "/reset", "/export",
+            "/retry", "/model", "/models", "/stream", "/copy", "/system",
+            "/memory", "/remember", "/forget", "/agent", "/workspace",
+            "/agentmode", "/smart", "/agentchat", "/run", "/undo", "/backups",
+            "/update", "/check", "/debug", "/settings", "/stats", "/clear",
+            "/about", "/help", "/quit",
+        }
+        self.assertEqual(set(HELP_DETAILS), dispatched)
+        for usage, _ in HELP:
+            self.assertIn(usage.split()[0].lower(), HELP_DETAILS)
+        for name, (usage, short, detail) in HELP_DETAILS.items():
+            self.assertEqual(name, usage.split()[0].lower())
+            self.assertTrue(short.strip(), name)
+            self.assertTrue(detail.strip(), name)
+        for alias, target in HELP_ALIASES.items():
+            self.assertIn(target, HELP_DETAILS, alias)
+        # каждая команда присутствует ровно в одной группе
+        grouped = [
+            usage.split()[0].lower()
+            for _, items in HELP_GROUPS
+            for usage, _, _ in items
+        ]
+        self.assertEqual(len(grouped), len(set(grouped)))
+        self.assertEqual(set(grouped), dispatched)
+
+    def test_help_listing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                app._help("")
+            out = buffer.getvalue()
+        for text in ("Команды ExelCode", "Чат", "Агент", "Интерфейс",
+                     "/settings", "/agent", "/help <команда>"):
+            self.assertIn(text, out)
+
+    def test_help_topic_and_aliases(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                app._help("agent")
+                app._help("/do")
+                app._help("settings")
+            out = buffer.getvalue()
+        self.assertIn("Подкоманды", out)
+        self.assertIn("сокращения: /do", out)
+        self.assertIn("/settings timeout 90", out)
+
+    def test_help_unknown_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                app._help("zzz")
+            out = buffer.getvalue()
+        self.assertIn("нет такой команды", out)
+
+
 class DiagnosticsTests(unittest.TestCase):
     def test_offline_diagnostics(self):
         with tempfile.TemporaryDirectory() as tmp:
