@@ -224,7 +224,8 @@ HELP_GROUPS: list[tuple[str, list[tuple[str, str, str]]]] = [
                 "/update",
                 "обновить ExelCode",
                 "Проверяет версию на GitHub. Если там новее — предлагает установить\n"
-                "и перезапускает приложение после успешного обновления.",
+                "и перезапускает приложение после успешного обновления.\n"
+                "Алиасы: /upgrade, /selfupdate",
             ),
             (
                 "/check",
@@ -325,6 +326,8 @@ HELP_ALIASES = {
     "/dbg": "/debug",
     "/config": "/settings",
     "/cfg": "/settings",
+    "/upgrade": "/update",
+    "/selfupdate": "/update",
     "/exit": "/quit",
     "/q": "/quit",
     "/version": "/about",
@@ -925,7 +928,7 @@ class App:
             self._settings(arg)
         elif cmd == "proxy":
             self._proxy(arg)
-        elif cmd == "update":
+        elif cmd in ("update", "upgrade", "selfupdate"):
             self._update()
         elif cmd == "agent":
             self._agent(arg)
