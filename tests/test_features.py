@@ -124,6 +124,20 @@ class CompactUiTests(unittest.TestCase):
         self.assertIn("ExelCode", out)
         self.assertNotIn("╭", out)
 
+    def test_termux_ui_indicator(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp, compact_ui="on")
+            app.tty = True
+            buffer = io.StringIO()
+            with patch("aifree.ui.is_termux", return_value=True), \
+                 patch("aifree.update.start_background_update_check"), \
+                 patch.object(app, "_read_input", side_effect=EOFError), \
+                 patch.object(app, "_write_history"), \
+                 patch.object(app, "_save"):
+                with redirect_stdout(buffer):
+                    app.run()
+            self.assertIn("✓ Termux UI", buffer.getvalue())
+
 
 class SettingsTests(unittest.TestCase):
     def test_set_numeric_and_compact(self):
@@ -222,6 +236,38 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(app.chat.agent_goal, "добавь тесты")
             self.assertEqual(app.chat.agent_mode, "auto")
             self.assertEqual(app.chat.recent_files, ["src/a.py", "src/b.py"])
+
+
+class CopyTests(unittest.TestCase):
+    def test_copyable_answer_extracts_single_code_block(self):
+        from aifree.ui import App
+
+        text = "Вот пример на Python:\n```python\nprint(\"Hello, World!\")\n```\n"
+        self.assertEqual(App._copyable_answer(text), 'print("Hello, World!")')
+
+    def test_copyable_answer_keeps_full_text_when_mixed(self):
+        from aifree.ui import App
+
+        text = "Объяснение:\n```py\nx=1\n```\nИ ещё текст, который важен."
+        self.assertEqual(App._copyable_answer(text), text.strip())
+
+    def test_agent_plain_reply_copies_code(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            result = SimpleNamespace(
+                touched_files=[],
+                changed=[],
+                ran=[],
+                error="",
+                dry_run=False,
+                done=True,
+                reply='Вот пример:\n```python\nprint("Hello, World!")\n```',
+            )
+            with patch("aifree.ui.save_config"):
+                with redirect_stdout(io.StringIO()):
+                    app._record_agent_result("print hello world", result, mode="auto")
+            self.assertEqual(app.last_answer, 'Вот пример:\n```python\nprint("Hello, World!")\n```')
+            self.assertEqual(app._copyable_answer(app.last_answer), 'print("Hello, World!")')
 
 
 class HelpTests(unittest.TestCase):

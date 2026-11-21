@@ -40,6 +40,7 @@ from .render import (
     Palette,
     StreamRenderer,
     compact_mode,
+    is_termux,
     terminal_width,
 )
 from .store import Chat, ChatStore, Memory, human_time
@@ -402,11 +403,16 @@ class App:
     # ── запуск ─────────────────────────────────────────────────────────
     def run(self) -> int:
         self.banner()
+        status_lines = []
         if self.smart_route:
-            print(self.pal.green("  ✓ умный режим: вкл"))
+            status_lines.append("  ✓ умный режим: вкл")
         if self.agent_chat:
-            print(self.pal.green("  ✓ чат→агент: вкл"))
-        if self.smart_route or self.agent_chat:
+            status_lines.append("  ✓ чат→агент: вкл")
+        if is_termux() and self.compact:
+            status_lines.append("  ✓ Termux UI")
+        for line in status_lines:
+            print(self.pal.green(line))
+        if status_lines:
             print()
         if self.tty:
             # Не блокируем запуск: результат проверки подхватится позже.
@@ -1681,7 +1687,10 @@ class App:
         if not summary.strip():
             return
         self.chat.add("assistant", summary, model="agent")
-        self.last_answer = summary
+        if reply and not changed and not ran:
+            self.last_answer = reply
+        else:
+            self.last_answer = summary
         self._save()
 
     def _workspace(self, arg: str) -> None:
@@ -1900,8 +1909,22 @@ class App:
         save_config(self.cfg)
         print(self.pal.green(f"  ✓ стриминг: {'вкл' if self.stream else 'выкл'}"))
 
+    @staticmethod
+    def _copyable_answer(text: str) -> str:
+        """Для /copy: если ответ — один code block с короткой подписью, вернуть код."""
+        raw = (text or "").strip()
+        if not raw:
+            return raw
+        blocks = [m.group(1).rstrip("\n") for m in re.finditer(r"```[^\n`]*\n(.*?)```", raw, re.S)]
+        if len(blocks) == 1:
+            rest = re.sub(r"```[^\n`]*\n.*?```", "", raw, count=1, flags=re.S).strip()
+            # короткая подпись вроде "Вот пример на Python:" — копируем сам код
+            if len(rest) <= 120 and not re.search(r"[.!?](?:\s|$)", rest):
+                return blocks[0].strip()
+        return raw
+
     def _copy(self, arg: str = "") -> None:
-        text = (self.last_answer or "").strip()
+        text = self._copyable_answer(self.last_answer or "")
         if not text:
             print(self.pal.dim("sys   нечего копировать"))
             return
