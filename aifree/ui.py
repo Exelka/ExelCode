@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -786,23 +787,52 @@ class App:
         client = Gemini(selected, timeout=float(self.cfg["timeout"]))
         self.client = client
 
+        def _start_spinner(label: str):
+            stop = threading.Event()
+            frames = "◐◓◑◒"
+
+            def run() -> None:
+                i = 0
+                while not stop.wait(0.12):
+                    frame = frames[i % len(frames)]
+                    try:
+                        self.out.write("\r\033[K" + self.pal.dim(f"{frame} {label}"))
+                        self.out.flush()
+                    except Exception:
+                        pass
+                    i += 1
+
+            t = threading.Thread(target=run, name="exelcode-spinner", daemon=True)
+            t.start()
+
+            def finish() -> None:
+                stop.set()
+                t.join(timeout=0.5)
+                try:
+                    self.out.write("\r\033[K")
+                    self.out.flush()
+                except Exception:
+                    pass
+
+            return finish
+
+        route_name = selected["name"]
+
         if self.stream and self.tty:
             renderer = StreamRenderer(color=self.color, compact=self.compact)
-            state = {"first": True, "model": selected["name"]}
+            state = {"first": True}
+            stop_spinner = _start_spinner("думаю...")
 
             def on_delta(chunk: str) -> None:
                 if state["first"]:
-                    self.out.write("\r\033[K")
-                    print(self.pal.dim(f"agent · {state['model']}"))
+                    stop_spinner()
                     state["first"] = False
                 renderer.feed(chunk)
 
-            self.out.write(self.pal.dim("agent · думаю…"))
-            self.out.flush()
             try:
                 reply = client.ask(prompt, on_delta=on_delta)
             except KeyboardInterrupt:
-                self.out.write("\r\033[K")
+                stop_spinner()
                 renderer.finish()
                 partial = client.last_text.strip()
                 print(self.pal.yellow("sys   ⏹ stopped"))
@@ -812,24 +842,26 @@ class App:
                     self._save()
                 return
             except GeminiError as exc:
-                self.out.write("\r\033[K")
+                stop_spinner()
                 self._error(exc)
                 return
             finally:
                 if state["first"]:
-                    self.out.write("\r\033[K")
-                    self.out.flush()
+                    stop_spinner()
             renderer.finish()
         else:
-            print(self.pal.dim(f"agent · {selected['name']}"))
+            stop_spinner = _start_spinner("думаю...") if self.tty else (lambda: None)
             try:
                 reply = client.ask(prompt)
             except KeyboardInterrupt:
+                stop_spinner()
                 print(self.pal.yellow("sys   ⏹ stopped"))
                 return
             except GeminiError as exc:
+                stop_spinner()
                 self._error(exc)
                 return
+            stop_spinner()
             if self.tty:
                 print(MarkdownRenderer(color=self.color, compact=self.compact).text(reply.text))
             else:
@@ -838,14 +870,15 @@ class App:
         self.chat.add("assistant", reply.text, model=reply.model)
         self.last_answer = reply.text
         self._save()
+        route_label = f"Агент - {route_name}"
         if self.compact:
             print(self.pal.dim(
-                f"  {reply.elapsed:.1f}s · {reply.model} · /copy"
+                f"  {reply.elapsed:.1f}s · {reply.model} · {route_label} · /copy"
             ))
         else:
             print(
                 self.pal.dim(
-                    f"        {reply.chars} chars · {reply.elapsed:.1f}s · model {reply.model} · /copy"
+                    f"        {reply.chars} chars · {reply.elapsed:.1f}s · model {reply.model} · {route_label} · /copy"
                 )
             )
         self._maybe_summarize()
