@@ -380,7 +380,8 @@ def is_action_request(text: str) -> bool:
     has_file = bool(
         re.search(
             r"\b(файл\w*|скрипт\w*|проект\w*|модул\w*|каталог\w*|директори\w*|папк\w*|"
-            r"исходник\w*|репозитори\w*)\b",
+            r"исходник\w*|репозитори\w*|библиотек\w*|пакет\w*|зависимост\w*|"
+            r"package\w*|librar\w*|dependenc\w*)\b",
             low,
         )
     ) or bool(
@@ -397,10 +398,10 @@ def is_action_request(text: str) -> bool:
             r"\b(создай|создать|сделай|запиши|сохрани|добавь|вставь|измени|поменяй|"
             r"поправь|исправь|почини|починить|чинить|налади|удали|убери|переименуй|"
             r"перемести|реализуй|допиши|перепиши|отредактируй|сгенерируй|обнови|"
-            r"настрой|инициализируй|запусти|протестируй|выполни|собери|"
+            r"настрой|инициализируй|запусти|протестируй|выполни|собери|установи|установить|"
             r"create|make|write|save|add|insert|edit|modify|change|fix|patch|"
             r"delete|remove|rename|move|implement|refactor|generate|update|init|"
-            r"scaffold|setup|run|test|execute|build)\b",
+            r"scaffold|setup|run|test|execute|build|install|uninstall)\b",
             low,
         )
     )
@@ -421,8 +422,8 @@ def is_action_request(text: str) -> bool:
         return True
 
     if re.search(
-        r"\b(запусти|протестируй|выполни|собери|почини|исправь|run|test|execute|build|fix)\b.*"
-        r"\b(тест\w*|команд\w*|скрипт\w*|pytest|unittest|npm|pnpm|yarn|make|cargo|go\b|python\b|pip\b|gradle|mvn)\b",
+        r"\b(запусти|протестируй|выполни|собери|почини|исправь|установи|установить|run|test|execute|build|fix|install|uninstall)\b.*"
+        r"\b(тест\w*|команд\w*|скрипт\w*|pytest|unittest|npm|pnpm|yarn|make|cargo|go\b|python\b|pip\b|gradle|mvn|pkg\b|apt\b)\b",
         low,
     ):
         return True
