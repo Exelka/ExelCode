@@ -347,6 +347,66 @@ class HelpTests(unittest.TestCase):
         self.assertIn("Команды ExelCode", out)
 
 
+class DeleteResetAllTests(unittest.TestCase):
+    def test_delete_all_removes_chats_and_memory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            app.store.new(title="second")
+            app.store.new(title="third")
+            app.memory.add("fact1")
+            self.assertGreaterEqual(len(app.store.list()), 3)
+            self.assertEqual(len(app.memory.items), 1)
+            with patch.object(app, "_confirm", return_value=True), \
+                 patch("aifree.ui.save_config"), \
+                 redirect_stdout(io.StringIO()):
+                app.command("/delete all")
+            self.assertEqual(len(app.store.list()), 1)
+            self.assertEqual(len(app.memory.items), 0)
+            self.assertEqual(app.chat.id, app.store.list()[0]["id"])
+
+    def test_reset_all_clears_data_and_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = make_app(tmp)
+            app.cfg["stream"] = False
+            app.cfg["smart_route"] = False
+            app.cfg["proxy_mode"] = "always"
+            app.store.new(title="second")
+            app.memory.add("fact1")
+            backups = Path(tmp) / "backups"
+            exports = Path(tmp) / "exports"
+            history = Path(tmp) / "history"
+            update_cache = Path(tmp) / "update_check.json"
+            proxy_user = Path(tmp) / "user_proxies.txt"
+            for p in (backups, exports):
+                p.mkdir(parents=True, exist_ok=True)
+                (p / "x.txt").write_text("x", encoding="utf-8")
+            history.write_text("old\n", encoding="utf-8")
+            update_cache.write_text("{}", encoding="utf-8")
+            proxy_user.write_text("1.2.3.4:80\n", encoding="utf-8")
+
+            with patch.object(app, "_confirm", return_value=True), \
+                 patch("aifree.ui.save_config"), \
+                 patch("aifree.ui.BACKUPS_DIR", backups), \
+                 patch("aifree.ui.EXPORTS_DIR", exports), \
+                 patch("aifree.ui.HISTORY_FILE", history), \
+                 patch("aifree.update.CACHE_FILE", update_cache), \
+                 patch("aifree.proxy.USER_FILE", proxy_user), \
+                 patch.object(app, "banner"), \
+                 redirect_stdout(io.StringIO()):
+                app.command("/reset all")
+
+            self.assertEqual(app.cfg["stream"], DEFAULTS["stream"])
+            self.assertEqual(app.cfg["smart_route"], DEFAULTS["smart_route"])
+            self.assertEqual(app.cfg["proxy_mode"], DEFAULTS["proxy_mode"])
+            self.assertEqual(len(app.store.list()), 1)
+            self.assertEqual(len(app.memory.items), 0)
+            self.assertFalse(history.exists())
+            self.assertFalse(update_cache.exists())
+            self.assertFalse(proxy_user.exists())
+            self.assertEqual(list(backups.iterdir()), [])
+            self.assertEqual(list(exports.iterdir()), [])
+
+
 class DiagnosticsTests(unittest.TestCase):
     def test_offline_diagnostics(self):
         with tempfile.TemporaryDirectory() as tmp:

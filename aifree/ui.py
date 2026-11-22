@@ -18,6 +18,7 @@ from .config import (
     CHATS_DIR,
     CONFIG_FILE,
     DATA_DIR,
+    DEFAULTS,
     EXPORTS_DIR,
     HISTORY_FILE,
     MEMORY_FILE,
@@ -77,16 +78,18 @@ HELP_GROUPS: list[tuple[str, list[tuple[str, str, str]]]] = [
                 "Пример: /rename Планы на неделю",
             ),
             (
-                "/delete [номер|id]",
-                "удалить чат",
+                "/delete [номер|id|all]",
+                "удалить чат/все",
                 "Удаляет чат после подтверждения. Без аргумента — текущий чат.\n"
-                "После удаления текущего открывается новый пустой чат.",
+                "/delete all — удаляет все чаты и глобальную память (/remember),\n"
+                "после чего создаёт новый пустой чат.",
             ),
             (
-                "/reset",
-                "очистить историю",
-                "Удаляет сообщения и краткий пересказ текущего чата. Файл чата и память о вас остаются.\n"
-                "Спрашивает подтверждение: y — очистить, Enter — отмена.",
+                "/reset [all]",
+                "очистить историю/всё",
+                "Без аргумента — очищает историю текущего чата, память о вас остаётся.\n"
+                "/reset all — сбрасывает всё: настройки, чаты, память, историю ввода,\n"
+                "бэкапы, экспорты, кэш обновлений и пользовательские прокси.",
             ),
             (
                 "/export [файл]",
@@ -912,7 +915,7 @@ class App:
         elif cmd == "export":
             self._export(arg)
         elif cmd == "reset":
-            self._reset()
+            self._reset(arg)
         elif cmd in ("clear", "cls"):
             if self.tty:
                 self.out.write("\033[2J\033[H")
@@ -1117,6 +1120,9 @@ class App:
         print(self.pal.green(f"  ✓ теперь чат называется: {self.chat.title}"))
 
     def _delete(self, arg: str) -> None:
+        if arg.strip().lower() == "all":
+            self._delete_all()
+            return
         if arg:
             items = self.store.list()
             chat_id = self.store.resolve(arg, items)
@@ -1141,6 +1147,29 @@ class App:
             self.cfg["last_chat"] = self.chat.id
             save_config(self.cfg)
             print(self.pal.dim(f"  открыт новый чат: {self.chat.id}"))
+
+    def _delete_all(self) -> None:
+        count = len(self.store.list())
+        if not self._confirm("  удалить ВСЕ чаты и глобальную память?"):
+            print(self.pal.dim("  отмена"))
+            return
+        deleted = 0
+        for item in self.store.list():
+            cid = item.get("id")
+            if not cid:
+                continue
+            try:
+                self.store.delete(cid)
+                deleted += 1
+            except Exception:
+                pass
+        self.memory.clear()
+        self.chat = self.store.new(model=self.chat.model, system=self.chat.system)
+        self.recent_agent_files = []
+        self.cfg["last_chat"] = self.chat.id
+        save_config(self.cfg)
+        print(self.pal.green(f"  ✓ удалено чатов: {deleted}/{count}, память очищена"))
+        print(self.pal.dim(f"  открыт новый чат: {self.chat.id}"))
 
     def _model(self, arg: str) -> None:
         if not arg:
@@ -1267,7 +1296,10 @@ class App:
             return
         print(self.pal.green(f"  ✓ экспортировано: {result}"))
 
-    def _reset(self) -> None:
+    def _reset(self, arg: str = "") -> None:
+        if arg.strip().lower() == "all":
+            self._reset_all()
+            return
         if not self._confirm("  очистить историю этого чата?"):
             print(self.pal.dim("  отмена"))
             return
@@ -1276,6 +1308,89 @@ class App:
         self.chat.summary_upto = 0
         self._save()
         print(self.pal.green("  ✓ история очищена (память о вас сохранена)"))
+
+    def _reset_all(self) -> None:
+        if not self._confirm(
+            self.pal.red("  сбросить ВСЕ настройки/чаты/память/данные ExelCode?")
+        ):
+            print(self.pal.dim("  отмена"))
+            return
+
+        from .proxy import USER_FILE as PROXY_USER_FILE
+        from .update import CACHE_FILE as UPDATE_CACHE_FILE
+
+        # 1) config defaults
+        self.cfg = dict(DEFAULTS)
+        save_config(self.cfg)
+
+        # 2) chats
+        deleted_chats = 0
+        for item in self.store.list():
+            cid = item.get("id")
+            if not cid:
+                continue
+            try:
+                self.store.delete(cid)
+                deleted_chats += 1
+            except Exception:
+                pass
+
+        # 3) memory
+        self.memory.clear()
+
+        # 4) history file + readline
+        try:
+            HISTORY_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            import readline
+
+            readline.clear_history()
+        except Exception:
+            pass
+
+        # 5) directory contents
+        for directory in (BACKUPS_DIR, EXPORTS_DIR):
+            try:
+                for child in directory.iterdir():
+                    if child.is_dir():
+                        shutil.rmtree(child, ignore_errors=True)
+                    else:
+                        try:
+                            child.unlink()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        # 6) known cache/user files
+        for path in (UPDATE_CACHE_FILE, PROXY_USER_FILE):
+            try:
+                Path(path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        # 7) runtime state
+        proxy_mod.set_mode("off")
+        self.stream = bool(self.cfg.get("stream", True))
+        self.agent_chat = bool(self.cfg.get("agent_chat", False))
+        self.smart_route = bool(self.cfg.get("smart_route", True))
+        self.agent_mode = normalize_agent_mode(self.cfg.get("agent_mode", "auto"))
+        self.workspace = default_workspace(self.cfg)
+        self._refresh_compact()
+        self.recent_agent_files = []
+        self.chat = self.store.new(model=self.cfg.get("model", "auto"), system=self.cfg.get("system", ""))
+        self.cfg["last_chat"] = self.chat.id
+        save_config(self.cfg)
+        self._save()
+
+        if self.tty:
+            self.out.write("\033[2J\033[H")
+            self.out.flush()
+            self.banner()
+        print(self.pal.green(f"  ✓ сброшено: чатов {deleted_chats}, память, настройки, история, кэш, прокси"))
+        print(self.pal.dim(f"  открыт новый чат: {self.chat.id}"))
 
     def _stats(self) -> None:
         print()
