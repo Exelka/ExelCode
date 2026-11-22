@@ -427,7 +427,7 @@ class App:
     # ── запуск ─────────────────────────────────────────────────────────
     def run(self) -> int:
         if self.tty:
-            self.out.write("\033[2J\033[H")
+            self.out.write("\033[2J\033[3J\033[H")
             self.out.flush()
         self.banner()
         status_lines = []
@@ -1044,7 +1044,7 @@ class App:
             self._reset(arg)
         elif cmd in ("clear", "cls"):
             if self.tty:
-                self.out.write("\033[2J\033[H")
+                self.out.write("\033[2J\033[3J\033[H")
                 self.banner()
             else:
                 print()
@@ -1178,7 +1178,7 @@ class App:
             save_config(self.cfg)
         self.recent_agent_files = []
         if self.tty:
-            self.out.write("\033[2J\033[H")
+            self.out.write("\033[2J\033[3J\033[H")
             self.out.flush()
             self.banner()
         print(self.pal.green(f"sys   ✓ новый чат: {self.chat.title}"))
@@ -1222,7 +1222,7 @@ class App:
         save_config(self.cfg)
         self.recent_agent_files = list(self.chat.recent_files)[-20:]
         if self.tty:
-            self.out.write("\033[2J\033[H")
+            self.out.write("\033[2J\033[3J\033[H")
             self.out.flush()
             self.banner()
         print(self.pal.green(f"  ✓ открыт: {self.chat.title}"))
@@ -1512,7 +1512,7 @@ class App:
         self._save()
 
         if self.tty:
-            self.out.write("\033[2J\033[H")
+            self.out.write("\033[2J\033[3J\033[H")
             self.out.flush()
             self.banner()
         print(self.pal.green(f"  ✓ сброшено: чатов {deleted_chats}, память, настройки, история, кэш, прокси"))
