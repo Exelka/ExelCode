@@ -194,8 +194,7 @@ class MarkdownRenderer:
         heading = re.match(r"^(#{1,6})\s+(.*?)\s*#*$", stripped)
         if heading:
             text = strip_inline(heading.group(2))
-            color = self.pal.cyan if len(heading.group(1)) <= 2 else self.pal.magenta
-            return color(self.pal.bold(text))
+            return self.pal.orange(self.pal.bold(text))
 
         if re.fullmatch(r"[-*_]{3,}", stripped):
             return self.pal.dim("─" * max(10, self.width - 2))
