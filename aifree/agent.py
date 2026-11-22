@@ -1548,13 +1548,17 @@ class Agent:
         return finish
 
     def _ask(self, prompt: str, label: str) -> str:
-        self._print(self.pal.dim(f"  sys  · {label}"))
-        self.out.flush()
-        reply = self.client.ask(prompt)
+        stop_spinner = self._spinner(label)
+        try:
+            reply = self.client.ask(prompt)
+        except Exception:
+            stop_spinner()
+            raise
+        stop_spinner()
         text = reply.text if hasattr(reply, "text") else str(reply)
         model_name = getattr(reply, "model", "?")
         elapsed = getattr(reply, "elapsed", 0.0)
-        self._print(self.pal.dim(f"    {model_name} · {elapsed:.1f}s"))
+        self._print(self.pal.dim(f"  sys  · {label}  {elapsed:.1f}s · {model_name}"))
         return text
 
     def show_plan(self, prepared: list[PreparedFile]) -> None:
@@ -1748,9 +1752,14 @@ class Agent:
 
         # Обычный вопрос/разговор без привязки к файлам проекта — без сканирования
         has_agent_ctx = bool(self.history or self.recent_files)
-        if should_answer_without_scan(task) and not _is_followup_with_context(
-            task, self.history, self.recent_files
-        ):
+        is_followup = _is_followup_with_context(task, self.history, self.recent_files)
+        conversational_followup = (
+            is_followup
+            and not is_action_request(task)
+            and not needs_workspace_context(task)
+            and not self.recent_files
+        )
+        if should_answer_without_scan(task) and (not is_followup or conversational_followup):
             ctx = ""
             if has_agent_ctx:
                 ctx = (
