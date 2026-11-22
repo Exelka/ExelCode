@@ -790,6 +790,65 @@ class App:
         def _start_spinner(label: str):
             stop = threading.Event()
             frames = "◐◓◑◒"
+            echo_state = None
+
+            def _suppress_input():
+                nonlocal echo_state
+                if not self.tty:
+                    return
+                try:
+                    if os.name == "nt":
+                        import ctypes
+                        import ctypes.wintypes as wt
+
+                        kernel32 = ctypes.windll.kernel32
+                        h = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
+                        mode = wt.DWORD()
+                        if not kernel32.GetConsoleMode(h, ctypes.byref(mode)):
+                            return
+                        echo_state = ("nt", h, mode.value)
+                        ENABLE_ECHO_INPUT = 0x0004
+                        ENABLE_LINE_INPUT = 0x0002
+                        new_mode = mode.value & ~ENABLE_ECHO_INPUT & ~ENABLE_LINE_INPUT
+                        kernel32.SetConsoleMode(h, new_mode)
+                    else:
+                        import termios
+
+                        fd = sys.stdin.fileno()
+                        old = termios.tcgetattr(fd)
+                        echo_state = ("posix", fd, old)
+                        new = termios.tcgetattr(fd)
+                        new[3] = new[3] & ~termios.ECHO & ~termios.ICANON
+                        termios.tcsetattr(fd, termios.TCSADRAIN, new)
+                except Exception:
+                    echo_state = None
+
+            def _restore_input():
+                nonlocal echo_state
+                if not echo_state:
+                    return
+                try:
+                    if echo_state[0] == "nt":
+                        import ctypes
+
+                        kernel32 = ctypes.windll.kernel32
+                        _, h, old_mode = echo_state
+                        kernel32.SetConsoleMode(h, old_mode)
+                        kernel32.FlushConsoleInputBuffer(h)
+                    else:
+                        import termios
+
+                        _, fd, old = echo_state
+                        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+                        try:
+                            termios.tcflush(fd, termios.TCIFLUSH)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                echo_state = None
+
+            _suppress_input()
 
             def run() -> None:
                 i = 0
@@ -813,6 +872,7 @@ class App:
                     self.out.flush()
                 except Exception:
                     pass
+                _restore_input()
 
             return finish
 
@@ -870,7 +930,7 @@ class App:
         self.chat.add("assistant", reply.text, model=reply.model)
         self.last_answer = reply.text
         self._save()
-        route_label = f"Агент - {route_name}"
+        route_label = route_name
         if self.compact:
             print(self.pal.dim(
                 f"  {reply.elapsed:.1f}s · {reply.model} · {route_label} · /copy"
