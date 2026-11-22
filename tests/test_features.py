@@ -122,7 +122,8 @@ class CompactUiTests(unittest.TestCase):
                 app.banner()
             out = buffer.getvalue()
         self.assertIn("ExelCode", out)
-        self.assertNotIn("╭", out)
+        self.assertIn("╭", out)
+        self.assertIn("╰", out)
 
     def test_termux_ui_indicator(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -2436,15 +2436,23 @@ class App:
         if self.compact:
             limit = max(20, width)
 
-            def short(text: str) -> str:
-                return text if len(text) <= limit else text[: limit - 1] + "…"
+            inner = max(10, limit - 2)
+            title = f" ExelCode {__version__} "
+            lines = [
+                self.pal.dim("модель: ") + self.pal.rgb(76, 175, 80, model),
+                self.pal.dim("чат: ") + self.pal.white(chat),
+                self.pal.dim("папка: ") + self.pal.dim(ws),
+                self.pal.rgb(106, 153, 166, "/help"),
+            ]
+            lines = [fit(line, inner) for line in lines]
+            content_width = max([vlen(title) + 2] + [vlen(line) for line in lines])
+            inner = max(10, min(inner, content_width))
 
             print()
-            print(self.pal.bold(self.pal.cyan(short(f"ExelCode {__version__}"))))
-            print(self.pal.dim("модель: ") + self.pal.rgb(76, 175, 80, short(model)))
-            print(self.pal.dim("чат: ") + short(chat))
-            print(self.pal.dim("папка: ") + self.pal.dim(short(ws)))
-            print(self.pal.rgb(106, 153, 166, short("/help")))
+            print(self.pal.cyan("╭") + self.pal.bold(self.pal.cyan(ljust("─" + title, inner, "─"))) + self.pal.cyan("╮"))
+            for line in lines:
+                print(self.pal.cyan("│") + ljust(fit(line, inner), inner) + self.pal.cyan("│"))
+            print(self.pal.cyan("╰" + "─" * inner + "╯"))
             print()
             return
 
