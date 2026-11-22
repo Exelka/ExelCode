@@ -2397,7 +2397,7 @@ class App:
         title = f" ExelCode {__version__} "
         chat = (self.chat.title or "Новый чат").strip()
         model_name = resolve_model(self.chat.model)["name"]
-        model = f"auto→{model_name}"
+        model = model_name if self.chat.model == "auto" else f"{self.chat.model}→{model_name}"
         ws = str(self.workspace or "-")
         width = max(20, min(self.width, 80))
 
