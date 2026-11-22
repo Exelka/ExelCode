@@ -110,8 +110,8 @@ class RenderTests(unittest.TestCase):
 
     def test_highlight_python(self):
         painted = highlight_line("def f(x):  # привет", "python")
-        self.assertIn("\033[1;35mdef", painted)
-        self.assertIn("\033[90m# привет", painted)
+        self.assertIn("\033[38;2;249;38;114mdef", painted)
+        self.assertIn("\033[38;2;117;113;94m# привет", painted)
 
     def test_highlight_disabled_is_plain(self):
         line = "const x = 'a' // c"
@@ -121,17 +121,17 @@ class RenderTests(unittest.TestCase):
         state = new_state()
         first = highlight_line("/* начало", "c", state)
         second = highlight_line("конец */ int x = 1;", "c", state)
-        self.assertIn("\033[90m/* начало", first)
-        self.assertTrue(second.startswith("\033[90mконец */"))
-        self.assertIn("\033[1;35mint", second)
+        self.assertIn("\033[38;2;117;113;94m/* начало", first)
+        self.assertTrue(second.startswith("\033[38;2;117;113;94mконец */"))
+        self.assertIn("\033[38;2;249;38;114mint", second)
 
     def test_highlight_json_and_diff(self):
         obj = highlight_line('{"key": "value", "n": 3}', "json")
-        self.assertIn("\033[36m\"key\"", obj)
-        self.assertIn("\033[32m\"value\"", obj)
-        self.assertIn("\033[33m3", obj)
-        self.assertIn("\033[32m+ new", highlight_line("+ new", "diff"))
-        self.assertIn("\033[31m- old", highlight_line("- old", "diff"))
+        self.assertIn("\033[38;2;249;38;114m\"key\"", obj)
+        self.assertIn("\033[38;2;230;219;116m\"value\"", obj)
+        self.assertIn("\033[38;2;174;129;255m3", obj)
+        self.assertIn("\033[38;2;166;226;46m+ new", highlight_line("+ new", "diff"))
+        self.assertIn("\033[38;2;249;38;114m- old", highlight_line("- old", "diff"))
 
     def test_markdown_code_block_no_ansi_when_plain(self):
         text = "```python\nprint('hi')\n```"
@@ -146,7 +146,7 @@ class RenderTests(unittest.TestCase):
             renderer.feed(chunk)
         renderer.finish()
         result = buffer.getvalue()
-        self.assertIn("\033[1;35mdef", result)
+        self.assertIn("\033[38;2;249;38;114mdef", result)
         self.assertIn("python", result)
 
 

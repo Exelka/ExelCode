@@ -11,19 +11,20 @@ import re
 
 RESET = "\033[0m"
 
-C_KEYWORD = "1;35"
-C_STRING = "32"
-C_COMMENT = "90"
-C_NUMBER = "33"
-C_FUNC = "36"
-C_BUILTIN = "34"
-C_OP = "90"
-C_TAG = "34"
-C_ATTR = "36"
-C_KEY = "36"
-C_ADD = "32"
-C_DEL = "31"
-C_HUNK = "36"
+# Monokai palette
+C_KEYWORD = "38;2;249;38;114"   # pink
+C_STRING = "38;2;230;219;116"   # yellow
+C_COMMENT = "38;2;117;113;94"   # gray
+C_NUMBER = "38;2;174;129;255"   # purple
+C_FUNC = "38;2;166;226;46"      # green
+C_BUILTIN = "38;2;102;217;239"  # cyan
+C_OP = "38;2;248;248;242"       # white
+C_TAG = "38;2;249;38;114"       # pink
+C_ATTR = "38;2;166;226;46"      # green
+C_KEY = "38;2;249;38;114"       # pink
+C_ADD = "38;2;166;226;46"       # green
+C_DEL = "38;2;249;38;114"       # pink
+C_HUNK = "38;2;102;217;239"     # cyan
 
 
 def _paint(code: str, text: str, enabled: bool) -> str:
@@ -681,7 +682,7 @@ def _toml(line: str, enabled: bool) -> str:
 
 def _diff(line: str, enabled: bool) -> str:
     if line.startswith(("diff ", "index ", "--- ", "+++ ")):
-        return _paint("1", line, enabled)
+        return _paint("38;2;248;248;242", line, enabled)
     if line.startswith("@@"):
         return _paint(C_HUNK, line, enabled)
     if line.startswith("+"):
