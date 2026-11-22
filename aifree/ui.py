@@ -1889,8 +1889,6 @@ class App:
 
     def _run_agent_task(self, task: str, mode: str | None = None) -> None:
         mode = normalize_agent_mode(mode or self.agent_mode)
-        label = AGENT_MODE_NAMES.get(mode, mode)
-        print(self.pal.dim(f"sys  · агент   режим: {label} · папка: {self.workspace}"))
         history = self.chat.messages[-5:]
         recent_files = list(self.recent_agent_files)
         try:

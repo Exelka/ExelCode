@@ -35,6 +35,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -1466,6 +1467,86 @@ class Agent:
         if not self.quiet:
             print(text, file=self.out)
 
+    def _spinner(self, label: str = "думаю..."):
+        if self.quiet or not getattr(self.out, "isatty", lambda: False)():
+            return lambda: None
+        stop = threading.Event()
+        frames = "◐◓◑◒"
+        echo_state = None
+
+        def _suppress():
+            nonlocal echo_state
+            try:
+                if os.name == "nt":
+                    import ctypes, ctypes.wintypes as wt
+                    kernel32 = ctypes.windll.kernel32
+                    h = kernel32.GetStdHandle(-10)
+                    mode = wt.DWORD()
+                    if not kernel32.GetConsoleMode(h, ctypes.byref(mode)):
+                        return
+                    echo_state = ("nt", h, mode.value)
+                    kernel32.SetConsoleMode(h, mode.value & ~0x0004 & ~0x0002)
+                else:
+                    import termios, sys as _sys
+                    fd = _sys.stdin.fileno()
+                    old = termios.tcgetattr(fd)
+                    echo_state = ("posix", fd, old)
+                    new = termios.tcgetattr(fd)
+                    new[3] = new[3] & ~termios.ECHO & ~termios.ICANON
+                    termios.tcsetattr(fd, termios.TCSADRAIN, new)
+            except Exception:
+                echo_state = None
+
+        def _restore():
+            nonlocal echo_state
+            if not echo_state:
+                return
+            try:
+                if echo_state[0] == "nt":
+                    import ctypes
+                    kernel32 = ctypes.windll.kernel32
+                    _, h, old_mode = echo_state
+                    kernel32.SetConsoleMode(h, old_mode)
+                    kernel32.FlushConsoleInputBuffer(h)
+                else:
+                    import termios
+                    _, fd, old = echo_state
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old)
+                    try:
+                        termios.tcflush(fd, termios.TCIFLUSH)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            echo_state = None
+
+        _suppress()
+
+        def run():
+            i = 0
+            while not stop.wait(0.12):
+                try:
+                    self.out.write("\r\033[K" + self.pal.dim(f"{frames[i % len(frames)]} {label}"))
+                    self.out.flush()
+                except Exception:
+                    pass
+                i += 1
+
+        t = threading.Thread(target=run, name="exelcode-agent-spinner", daemon=True)
+        t.start()
+
+        def finish():
+            stop.set()
+            t.join(timeout=0.5)
+            try:
+                self.out.write("\r\033[K")
+                self.out.flush()
+            except Exception:
+                pass
+            _restore()
+
+        return finish
+
     def _ask(self, prompt: str, label: str) -> str:
         self._print(self.pal.dim(f"  sys  · {label}"))
         self.out.flush()
@@ -1670,8 +1751,6 @@ class Agent:
         if should_answer_without_scan(task) and not _is_followup_with_context(
             task, self.history, self.recent_files
         ):
-            self._print(self.pal.dim("  agent · отвечаю…"))
-            self.out.flush()
             ctx = ""
             if has_agent_ctx:
                 ctx = (
@@ -1688,16 +1767,19 @@ class Agent:
                 f"{ctx}\n"
                 f"Вопрос: {task}"
             )
+            stop_spinner = self._spinner("думаю...")
             try:
                 reply = self.client.ask(prompt)
                 text = reply.text if hasattr(reply, "text") else str(reply)
                 model_name = getattr(reply, "model", "?")
                 elapsed = getattr(reply, "elapsed", 0.0)
             except Exception as exc:  # noqa: BLE001
+                stop_spinner()
                 raise AgentError(f"не удалось получить ответ: {exc}") from exc
-            self._print(self.pal.dim(f"    {model_name} · {elapsed:.1f}s"))
-            self._print()
+            stop_spinner()
+
             if not self.quiet:
+                self._print()
                 rendered = MarkdownRenderer(
                     color=self.pal.enabled, compact=self.compact
                 ).text(text.strip())
@@ -1705,6 +1787,37 @@ class Agent:
                     print(rendered, file=self.out)
                 else:
                     print(text.strip(), file=self.out)
+                try:
+                    from .gemini import resolve_model
+                    route_name = resolve_model(self.model)["name"]
+                except Exception:
+                    route_name = str(self.model)
+                sep = self.pal.dim(" · ")
+                if self.compact:
+                    meta = (
+                        self.pal.dim("  ")
+                        + self.pal.rgb(8, 103, 159, f"{elapsed:.1f}s")
+                        + sep
+                        + self.pal.rgb(221, 108, 54, str(model_name))
+                        + sep
+                        + self.pal.rgb(76, 175, 80, str(route_name))
+                        + sep
+                        + self.pal.dim("/copy")
+                    )
+                else:
+                    meta = (
+                        self.pal.dim(f"        {len(text.strip())} chars")
+                        + sep
+                        + self.pal.rgb(8, 103, 159, f"{elapsed:.1f}s")
+                        + sep
+                        + self.pal.dim("model ")
+                        + self.pal.rgb(221, 108, 54, str(model_name))
+                        + sep
+                        + self.pal.rgb(76, 175, 80, str(route_name))
+                        + sep
+                        + self.pal.dim("/copy")
+                    )
+                self._print(meta)
             return AgentResult(reply=text.strip(), rounds=1, done=True, touched_files=[])
 
         self._print(self.pal.dim(f"  📁 {self.ws.root}"))
