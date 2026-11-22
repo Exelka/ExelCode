@@ -2401,6 +2401,38 @@ class App:
         ws = str(self.workspace or "-")
         width = max(20, min(self.width, 80))
 
+        def vlen(s: str) -> int:
+            return len(_ANSI_RE.sub("", s))
+
+        def aslice(s: str, limit: int) -> str:
+            if limit <= 0:
+                return ""
+            out = []
+            vis = 0
+            i = 0
+            while i < len(s) and vis < limit:
+                m = _ANSI_RE.match(s, i)
+                if m:
+                    out.append(m.group(0))
+                    i = m.end()
+                    continue
+                out.append(s[i])
+                i += 1
+                vis += 1
+            return "".join(out)
+
+        def fit(text: str, limit: int) -> str:
+            limit = max(0, limit)
+            if vlen(text) <= limit:
+                return text
+            if limit <= 1:
+                return aslice(text, limit)
+            return aslice(text, limit - 1) + "…"
+
+        def ljust(text: str, limit: int, fill: str = " ") -> str:
+            pad = limit - vlen(text)
+            return text + (fill * pad if pad > 0 else "")
+
         if self.compact:
             limit = max(20, width)
 
@@ -2408,44 +2440,39 @@ class App:
                 return text if len(text) <= limit else text[: limit - 1] + "…"
 
             print()
-            print(self.pal.cyan(short(f"ExelCode {__version__}")))
-            print(self.pal.dim(short(f"модель: {model}")))
-            print(self.pal.dim(short(f"чат: {chat}")))
-            print(self.pal.dim(short(f"папка: {ws}")))
-            print(self.pal.dim(short("/help")))
+            print(self.pal.bold(self.pal.cyan(short(f"ExelCode {__version__}"))))
+            print(self.pal.dim("модель: ") + self.pal.rgb(76, 175, 80, short(model)))
+            print(self.pal.dim("чат: ") + short(chat))
+            print(self.pal.dim("папка: ") + self.pal.dim(short(ws)))
+            print(self.pal.cyan(short("/help")))
             print()
             return
 
         inner = max(10, width - 2)
 
-        def fit(text: str, limit: int | None = None) -> str:
-            limit = inner if limit is None else max(0, min(limit, inner))
-            if len(text) <= limit:
-                return text
-            if limit <= 1:
-                return text[:limit]
-            return text[: limit - 1] + "…"
-
         def row_lr(left: str, right: str) -> str:
             right = fit(right, inner)
-            space = inner - len(right)
+            space = inner - vlen(right)
             if space <= 0:
-                return "│" + right[:inner].ljust(inner) + "│"
+                return "│" + ljust(aslice(right, inner), inner) + "│"
             left = fit(left, space - 1 if space > 1 else 1)
-            gap = inner - len(left) - len(right)
+            gap = inner - vlen(left) - vlen(right)
             if gap < 1:
-                left = fit(left, max(0, inner - len(right) - 1))
-                gap = inner - len(left) - len(right)
+                left = fit(left, max(0, inner - vlen(right) - 1))
+                gap = inner - vlen(left) - vlen(right)
             return "│" + left + (" " * max(1, gap)) + right + "│"
 
-        def row(text: str) -> str:
-            return "│" + fit(text).ljust(inner) + "│"
+        chat_part = self.pal.dim(" чат: ") + self.pal.white(fit(chat, max(1, inner // 2)))
+        model_part = self.pal.dim("модель: ") + self.pal.rgb(76, 175, 80, model) + " "
+        ws_part = self.pal.dim(" папка: ") + self.pal.dim(fit(ws, max(1, inner - 12)))
+        help_part = self.pal.cyan("/help ")
 
-        top = row_lr(f" чат: {chat}", f"модель: {model} ")
-        bottom = row_lr(f" папка: {ws}", "/help ")
+        top = row_lr(chat_part, model_part)
+        bottom = row_lr(ws_part, help_part)
+        title_line = "╭" + ljust("─" + title, inner, "─") + "╮"
         print()
-        print(self.pal.cyan("╭" + fit("─" + title).ljust(inner, "─") + "╮"))
-        print(self.pal.cyan(top))
-        print(self.pal.cyan(bottom))
+        print(self.pal.cyan("╭") + self.pal.bold(self.pal.cyan(ljust("─" + title, inner, "─"))) + self.pal.cyan("╮"))
+        print(self.pal.cyan("│") + top[1:-1] + self.pal.cyan("│"))
+        print(self.pal.cyan("│") + bottom[1:-1] + self.pal.cyan("│"))
         print(self.pal.cyan("╰" + "─" * inner + "╯"))
         print()
