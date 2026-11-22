@@ -886,6 +886,7 @@ class App:
             def on_delta(chunk: str) -> None:
                 if state["first"]:
                     stop_spinner()
+                    print()
                     state["first"] = False
                 renderer.feed(chunk)
 
@@ -922,6 +923,7 @@ class App:
                 self._error(exc)
                 return
             stop_spinner()
+            print()
             if self.tty:
                 print(MarkdownRenderer(color=self.color, compact=self.compact).text(reply.text))
             else:
