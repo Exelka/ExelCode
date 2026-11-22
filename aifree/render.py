@@ -40,6 +40,9 @@ class Palette:
     def orange(self, text: str) -> str:
         return self._wrap("38;5;208", text)
 
+    def rgb(self, r: int, g: int, b: int, text: str) -> str:
+        return self._wrap(f"38;2;{r};{g};{b}", text)
+
     def blue(self, text: str) -> str:
         return self._wrap("34", text)
 

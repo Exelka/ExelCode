@@ -950,11 +950,11 @@ class App:
         if self.compact:
             meta = (
                 self.pal.dim("  ")
-                + self.pal.cyan(f"{reply.elapsed:.1f}s")
+                + self.pal.rgb(8, 103, 159, f"{reply.elapsed:.1f}s")
                 + sep
-                + self.pal.magenta(reply.model)
+                + self.pal.rgb(221, 108, 54, reply.model)
                 + sep
-                + self.pal.orange(route_name)
+                + self.pal.rgb(76, 175, 80, route_name)
                 + sep
                 + self.pal.dim("/copy")
             )
@@ -963,12 +963,12 @@ class App:
             meta = (
                 self.pal.dim(f"        {len(reply_text)} chars")
                 + sep
-                + self.pal.cyan(f"{reply.elapsed:.1f}s")
+                + self.pal.rgb(8, 103, 159, f"{reply.elapsed:.1f}s")
                 + sep
                 + self.pal.dim("model ")
-                + self.pal.magenta(reply.model)
+                + self.pal.rgb(221, 108, 54, reply.model)
                 + sep
-                + self.pal.orange(route_name)
+                + self.pal.rgb(76, 175, 80, route_name)
                 + sep
                 + self.pal.dim("/copy")
             )
