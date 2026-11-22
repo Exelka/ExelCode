@@ -2444,7 +2444,7 @@ class App:
             print(self.pal.dim("модель: ") + self.pal.rgb(76, 175, 80, short(model)))
             print(self.pal.dim("чат: ") + short(chat))
             print(self.pal.dim("папка: ") + self.pal.dim(short(ws)))
-            print(self.pal.dim(short("/help")))
+            print(self.pal.rgb(106, 153, 166, short("/help")))
             print()
             return
 
@@ -2465,7 +2465,7 @@ class App:
         chat_part = self.pal.dim(" чат: ") + self.pal.white(fit(chat, max(1, inner // 2)))
         model_part = self.pal.dim("модель: ") + self.pal.rgb(76, 175, 80, model) + " "
         ws_part = self.pal.dim(" папка: ") + self.pal.dim(fit(ws, max(1, inner - 12)))
-        help_part = self.pal.dim("/help ")
+        help_part = self.pal.rgb(106, 153, 166, "/help ")
 
         top = row_lr(chat_part, model_part)
         bottom = row_lr(ws_part, help_part)
