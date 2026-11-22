@@ -37,6 +37,9 @@ class Palette:
     def yellow(self, text: str) -> str:
         return self._wrap("33", text)
 
+    def orange(self, text: str) -> str:
+        return self._wrap("38;5;208", text)
+
     def blue(self, text: str) -> str:
         return self._wrap("34", text)
 

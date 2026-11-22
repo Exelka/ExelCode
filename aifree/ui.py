@@ -946,17 +946,33 @@ class App:
         self.chat.add("assistant", reply_text, model=reply.model)
         self.last_answer = reply_text
         self._save()
-        route_label = route_name
+        sep = self.pal.dim(" · ")
         if self.compact:
-            print(self.pal.dim(
-                f"  {reply.elapsed:.1f}s · {reply.model} · {route_label} · /copy"
-            ))
-        else:
-            print(
-                self.pal.dim(
-                    f"        {reply.chars} chars · {reply.elapsed:.1f}s · model {reply.model} · {route_label} · /copy"
-                )
+            meta = (
+                self.pal.dim("  ")
+                + self.pal.cyan(f"{reply.elapsed:.1f}s")
+                + sep
+                + self.pal.magenta(reply.model)
+                + sep
+                + self.pal.orange(route_name)
+                + sep
+                + self.pal.dim("/copy")
             )
+            print(meta)
+        else:
+            meta = (
+                self.pal.dim(f"        {len(reply_text)} chars")
+                + sep
+                + self.pal.cyan(f"{reply.elapsed:.1f}s")
+                + sep
+                + self.pal.dim("model ")
+                + self.pal.magenta(reply.model)
+                + sep
+                + self.pal.orange(route_name)
+                + sep
+                + self.pal.dim("/copy")
+            )
+            print(meta)
         self._maybe_summarize()
 
     def _error(self, exc: Exception) -> None:
