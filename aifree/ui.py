@@ -877,6 +877,15 @@ class App:
             return finish
 
         route_name = selected["name"]
+        _artifact_re = re.compile(
+            r"(?im)^\s*https?://googleusercontent\.com/card_content/\S+\s*$\n?"
+        )
+
+        def _clean_reply(text: str) -> str:
+            cleaned = _artifact_re.sub("", text or "")
+            # collapse excess blank lines left behind
+            cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+            return cleaned
 
         if self.stream and self.tty:
             renderer = StreamRenderer(color=self.color, compact=self.compact)
@@ -888,6 +897,9 @@ class App:
                     stop_spinner()
                     print()
                     state["first"] = False
+                chunk = _artifact_re.sub("", chunk)
+                if not chunk:
+                    return
                 renderer.feed(chunk)
 
             try:
@@ -923,14 +935,16 @@ class App:
                 self._error(exc)
                 return
             stop_spinner()
+            reply_text = _clean_reply(reply.text)
             print()
             if self.tty:
-                print(MarkdownRenderer(color=self.color, compact=self.compact).text(reply.text))
+                print(MarkdownRenderer(color=self.color, compact=self.compact).text(reply_text))
             else:
-                print(reply.text)
+                print(reply_text)
 
-        self.chat.add("assistant", reply.text, model=reply.model)
-        self.last_answer = reply.text
+        reply_text = _clean_reply(reply.text)
+        self.chat.add("assistant", reply_text, model=reply.model)
+        self.last_answer = reply_text
         self._save()
         route_label = route_name
         if self.compact:
