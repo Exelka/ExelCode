@@ -23,10 +23,12 @@ USER_FILE = DATA_DIR / "proxies.txt"
 
 _LOCK = threading.Lock()
 _STATE = {
-    "mode": "off",  # off | auto | always
+    "mode": "auto",  # off | auto | always
     "dead_until": {},  # proxy -> monotonic timestamp
 }
 _DEAD_TTL = 5 * 60.0  # не повторять мёртвый прокси 5 минут
+_NOTIFY = None
+_NOTIFY_LOCK = threading.Lock()
 
 
 def normalize_proxy(value: str) -> str | None:
@@ -115,10 +117,28 @@ def remove_user_proxy(value: str) -> bool:
     return removed
 
 
+def set_notify(fn) -> None:
+    """Устанавливает колбэк для сообщений о fallback (fn(str) -> None)."""
+    global _NOTIFY
+    with _NOTIFY_LOCK:
+        _NOTIFY = fn
+
+
+def _notify(msg: str) -> None:
+    with _NOTIFY_LOCK:
+        fn = _NOTIFY
+    if not fn:
+        return
+    try:
+        fn(msg)
+    except Exception:
+        pass
+
+
 def get_mode() -> str:
     with _LOCK:
-        mode = str(_STATE.get("mode", "off"))
-    return mode if mode in ("off", "auto", "always") else "off"
+        mode = str(_STATE.get("mode", "auto"))
+    return mode if mode in ("off", "auto", "always") else "auto"
 
 
 def set_mode(mode: str) -> str:
@@ -205,6 +225,11 @@ def urlopen(req: urllib.request.Request, timeout: float):
             direct_err = exc
             if mode == "off" or not _is_network_error(exc):
                 raise
+            proxies_count = len(load_proxies())
+            _notify(
+                f"прямое соединение не сработало, подключаю прокси "
+                f"({proxies_count} шт.) — если один не отвечает, пробую следующий"
+            )
 
     proxies = _alive_proxies()
     last_err: Exception | None = direct_err

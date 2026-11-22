@@ -17,12 +17,15 @@ class ProxyModuleTests(unittest.TestCase):
     def setUp(self):
         self._orig_mode = proxy_mod.get_mode()
         self._orig_dead = dict(proxy_mod._STATE.get("dead_until", {}))
+        self._orig_notify = proxy_mod._NOTIFY
         proxy_mod.set_mode("off")
         proxy_mod._STATE["dead_until"] = {}
+        proxy_mod.set_notify(None)
 
     def tearDown(self):
         proxy_mod.set_mode(self._orig_mode)
         proxy_mod._STATE["dead_until"] = self._orig_dead
+        proxy_mod.set_notify(self._orig_notify)
 
     def test_normalize(self):
         self.assertEqual(proxy_mod.normalize_proxy("1.2.3.4:8080"), "http://1.2.3.4:8080")

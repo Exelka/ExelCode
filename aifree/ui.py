@@ -391,6 +391,7 @@ class App:
         except (OSError, RuntimeError):
             self.workspace = Path.cwd()
         self.pal = Palette(color)
+        proxy_mod.set_notify(self._proxy_notify)
         self._width = None
         self.out = sys.stdout
         self.tty = sys.stdout.isatty()
@@ -1583,7 +1584,7 @@ class App:
         row("agent_run_output_chars", self.cfg.get("agent_run_output_chars", 8000))
         row("agent_max_diff_lines", self.cfg["agent_max_diff_lines"])
         print(self.pal.dim("  Прочее"))
-        row("proxy_mode", self.cfg.get("proxy_mode", "off"))
+        row("proxy_mode", self.cfg.get("proxy_mode", "auto"))
         row("last_chat", self.chat.id)
         print()
         print(self.pal.dim("  изменить: /settings <ключ> <значение> · пример: /settings timeout 90"))
@@ -2130,6 +2131,12 @@ class App:
         except Exception:
             return False
         return False
+
+    def _proxy_notify(self, msg: str) -> None:
+        try:
+            print(self.pal.yellow(f"  sys  · прокси  {msg}"))
+        except Exception:
+            pass
 
     def _proxy(self, arg: str = "") -> None:
         arg = (arg or "").strip()

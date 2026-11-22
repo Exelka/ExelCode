@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     ensure_dirs()
     cfg = load_config()
     try:
-        proxy_mod.set_mode(str(cfg.get("proxy_mode", "off")))
+        proxy_mod.set_mode(str(cfg.get("proxy_mode", "auto")))
     except ValueError:
         proxy_mod.set_mode("off")
     store = ChatStore(DATA_DIR / "chats")

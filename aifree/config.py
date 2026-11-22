@@ -62,7 +62,7 @@ DEFAULTS = {
     "agent_auto_approve": True,  # совместимость
     "agent_max_diff_lines": 120,
     "compact_ui": "auto",  # auto | on | off (узкие терминалы/Termux)
-    "proxy_mode": "off",  # off | auto | always
+    "proxy_mode": "auto",  # off | auto | always
 }
 
 
