@@ -793,7 +793,7 @@ class App:
             def on_delta(chunk: str) -> None:
                 if state["first"]:
                     self.out.write("\r\033[K")
-                    print(self.pal.bold(f"agent · {state['model']}"))
+                    print(self.pal.dim(f"agent · {state['model']}"))
                     state["first"] = False
                 renderer.feed(chunk)
 
@@ -821,7 +821,7 @@ class App:
                     self.out.flush()
             renderer.finish()
         else:
-            print(self.pal.bold(f"agent · {selected['name']}"))
+            print(self.pal.dim(f"agent · {selected['name']}"))
             try:
                 reply = client.ask(prompt)
             except KeyboardInterrupt:
