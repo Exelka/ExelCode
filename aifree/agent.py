@@ -2027,13 +2027,15 @@ class Agent:
                         "Command failed. Fix the cause, read files/logs if needed, then verify again or output DONE if this is expected."
                     )
 
-            if progressed:
+            if progressed and not (run_failed and not applied_now):
                 no_progress = 0
             else:
                 no_progress += 1
 
             # Решение о продолжении
             if run_failed:
+                if no_progress >= 2:
+                    break
                 feedback = "\n\n".join(feedback_parts)
                 continue
 
