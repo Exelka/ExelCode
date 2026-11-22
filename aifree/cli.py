@@ -321,14 +321,19 @@ def _run_agent(args, cfg: dict, text: str, pal: Palette) -> int:
         if result.changed:
             print(pal.dim("план: " + ", ".join(result.changed)))
     elif result.applied or result.ran:
+        parts = []
         if result.applied:
-            print(pal.green(f"готово: изменено файлов {len(result.changed)}"))
+            parts.append(pal.green(f"изменено {len(result.changed)}"))
         if result.ran:
             ok = sum(1 for r in result.ran if r.get("code") == 0)
-            print(pal.dim(f"проверки: {len(result.ran)}, успешно: {ok}"))
+            total = len(result.ran)
+            color = pal.green if ok == total else pal.yellow
+            parts.append(color(f"проверки {ok}/{total}"))
             blocked = sum(1 for r in result.ran if r.get("blocked"))
             if blocked:
-                print(pal.red(f"заблокировано политикой безопасности: {blocked}"))
+                parts.append(pal.red(f"заблокировано {blocked}"))
+        if parts:
+            print(pal.dim(" · ").join(parts))
         if result.backup:
             print(pal.dim(f"откат: --undo · бэкап: {result.backup}"))
     # plain answer / no file actions: no extra status line

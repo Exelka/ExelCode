@@ -1559,7 +1559,7 @@ class Agent:
         text = reply.text if hasattr(reply, "text") else str(reply)
         model_name = getattr(reply, "model", "?")
         elapsed = getattr(reply, "elapsed", 0.0)
-        self._print(self.pal.dim(f"  sys  · {label}  {elapsed:.1f}s · {model_name}"))
+        self._print(self.pal.dim(f"  {label}  {elapsed:.1f}s · {model_name}"))
         return text
 
     def show_plan(self, prepared: list[PreparedFile]) -> None:
@@ -1711,9 +1711,13 @@ class Agent:
                     {"cmd": cmd, "code": None, "output": "", "elapsed": 0.0, "skipped": True}
                 )
                 continue
-            code, output, elapsed = self.runner(
-                cmd, self.ws.root, self.run_timeout, self.run_output_chars
-            )
+            stop_run_spinner = self._spinner("выполняю...")
+            try:
+                code, output, elapsed = self.runner(
+                    cmd, self.ws.root, self.run_timeout, self.run_output_chars
+                )
+            finally:
+                stop_run_spinner()
             record = {
                 "cmd": cmd,
                 "code": code,
@@ -1729,8 +1733,10 @@ class Agent:
                 if output.count("\n") >= 40:
                     print(self.pal.dim("    …"), file=self.out)
             status = "ok" if code == 0 else f"exit {code}"
-            mark = self.pal.green("✓") if code == 0 else self.pal.red("✗")
-            self._print(f"  sys  · run     {mark} {status} · {elapsed:.1f}s")
+            if code == 0:
+                self._print(self.pal.green(f"  ✓ {status}") + self.pal.dim(f"  {elapsed:.1f}s"))
+            else:
+                self._print(self.pal.red(f"  ✗ {status}") + self.pal.dim(f"  {elapsed:.1f}s"))
             feedback_parts.append(format_run_feedback(cmd, code, output, elapsed))
             if code != 0:
                 failed = True
@@ -1963,9 +1969,9 @@ class Agent:
                 if prepared:
                     self.show_plan(prepared)
                     if self.dry_run:
-                        self._print(self.pal.yellow("  sys  · dry-run: files not changed"))
+                        self._print(self.pal.yellow("  dry-run: files not changed"))
                         if plan.runs:
-                            self._print(self.pal.dim("  sys  · requested commands (not run in dry-run):"))
+                            self._print(self.pal.dim("  requested commands (not run in dry-run):"))
                             for cmd in plan.runs:
                                 self._print(self.pal.dim(f"    $ {cmd}"))
                         changed_now = [item.path for item in prepared]
@@ -1980,7 +1986,7 @@ class Agent:
                             touched_files=_touched(files, applied, changed_now),
                         )
                     if not self._approve():
-                        self._print(self.pal.dim("  sys  · cancelled by user"))
+                        self._print(self.pal.dim("  cancelled by user"))
                         return AgentResult(
                             applied=bool(applied), dry_run=False, changed=applied,
                             ran=ran, backup=backup, rounds=rounds, reply=last_reply,
@@ -2007,14 +2013,15 @@ class Agent:
                             stale = [k for k in files if k.startswith(item.path + ":")]
                             for k in stale:
                                 files.pop(k, None)
-                    self._print(self.pal.green(f"  sys  · apply   ✓ {len(prepared)} file(s) changed"))
+                    self._print("")
+                    self._print(self.pal.green(f"  ✓ apply  {len(prepared)} file(s) changed"))
                     feedback_parts.append(
                         "Applied changes: " + ", ".join(item.path for item in prepared)
                     )
                     progressed = True
                     applied_now = True
                 else:
-                    self._print(self.pal.dim("  sys  · no changes"))
+                    self._print(self.pal.dim("  no changes"))
 
             # Запуск команд/проверок
             run_failed = False

@@ -1906,22 +1906,25 @@ class App:
         if result.error:
             print(self.pal.red(f"sys  · ошибка: {result.error}"))
         elif result.dry_run:
-            print(self.pal.yellow("sys  · dry-run: файлы не изменены"))
+            print(self.pal.yellow("  dry-run: файлы не изменены"))
             if result.changed:
-                print(self.pal.dim(f"      план: {', '.join(result.changed)}"))
+                print(self.pal.dim(f"  план: {', '.join(result.changed)}"))
         elif result.applied or result.ran:
+            parts = []
             if result.applied:
-                print(self.pal.green(f"sys  · изменено файлов: {len(result.changed)}"))
+                parts.append(self.pal.green(f"изменено {len(result.changed)}"))
             if result.ran:
                 ok = sum(1 for r in result.ran if r.get("code") == 0)
-                print(self.pal.dim(f"      проверки: {len(result.ran)}, успешно: {ok}"))
+                total = len(result.ran)
+                checks_color = self.pal.green if ok == total else self.pal.yellow
+                parts.append(checks_color(f"проверки {ok}/{total}"))
                 blocked = sum(1 for r in result.ran if r.get("blocked"))
                 if blocked:
-                    print(self.pal.red(
-                        f"      заблокировано политикой безопасности: {blocked}"
-                    ))
+                    parts.append(self.pal.red(f"заблокировано {blocked}"))
+            if parts:
+                print("  " + self.pal.dim(" · ").join(parts))
             if result.backup:
-                print(self.pal.dim(f"      откат: /undo · бэкап: {result.backup}"))
+                print(self.pal.dim(f"  откат: /undo  ·  бэкап: {result.backup}"))
         # для обычного ответа без файловых операций ничего не показываем
 
     def _record_agent_result(self, task: str, result, mode: str = "") -> None:
